@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "weewx-clearskies-realtime"
+version = "0.1.0"
+description = "weewx loop-packet → SSE bridge for the Clear Skies dashboard"
+readme = "README.md"
+license = { text = "GPL-3.0-only" }
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sse-starlette",
+    "configobj",
+]
+
+[project.optional-dependencies]
+mqtt = ["paho-mqtt"]
+dev = [
+    "ruff==0.11.9",
+    "mypy==1.15.0",
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[project.scripts]
+weewx-clearskies-realtime = "weewx_clearskies_realtime.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["weewx_clearskies_realtime"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "N", "UP", "SIM"]
+# S101 allow assert in tests; S104 allow 0.0.0.0 bind (documented, operator-controlled)
+ignore = ["S101", "S104"]
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+python_version = "3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
