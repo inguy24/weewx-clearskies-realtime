@@ -51,6 +51,9 @@ class MQTTSettings:
     # Name of the env var that holds the MQTT password — never the password itself.
     password_env: str = "WEEWX_CLEARSKIES_MQTT_PASSWORD"  # noqa: S105
     tls: bool = False
+    # Path to a PEM CA bundle for broker TLS verification.  Empty string → use
+    # the system CA bundle (paho default).  ADR-005 §Config.
+    ca_file: str = ""
     qos: int = 0
     keepalive: int = 60
 
@@ -70,6 +73,9 @@ class MQTTSettings:
 class SSESettings:
     bind_host: str = "0.0.0.0"
     bind_port: int = 8765
+    # Comma-separated origins for CORS.  Default "*" (open) — operators should
+    # restrict in production via config or a reverse proxy.
+    allowed_origins: list[str] = field(default_factory=lambda: ["*"])
 
 
 @dataclass
@@ -179,14 +185,21 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
             mqtt_raw.get("password_env", "WEEWX_CLEARSKIES_MQTT_PASSWORD")
         ).strip(),
         tls=str(mqtt_raw.get("tls", "false")).strip().lower() in ("true", "1", "yes"),
+        ca_file=str(mqtt_raw.get("ca_file", "")).strip(),
         qos=int(mqtt_raw.get("qos", 0)),
         keepalive=int(mqtt_raw.get("keepalive", 60)),
     )
 
     sse_raw = raw.get("sse", {})
+    # allowed_origins is a comma-separated string in the INI file.
+    _origins_raw = str(sse_raw.get("allowed_origins", "*")).strip()
+    _allowed_origins = [o.strip() for o in _origins_raw.split(",") if o.strip()]
+    if not _allowed_origins:
+        _allowed_origins = ["*"]
     s.sse = SSESettings(
         bind_host=str(sse_raw.get("bind_host", "0.0.0.0")).strip(),
         bind_port=int(sse_raw.get("bind_port", 8765)),
+        allowed_origins=_allowed_origins,
     )
 
     health_raw = raw.get("health", {})

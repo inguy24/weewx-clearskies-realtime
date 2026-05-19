@@ -95,7 +95,7 @@ def client() -> TestClient:
 def test_liveness_always_200(client: TestClient) -> None:
     resp = client.get("/health/live")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "checks": {}}
 
 
 def test_readiness_no_probes_is_200_ok(client: TestClient) -> None:

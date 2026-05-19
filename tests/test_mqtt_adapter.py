@@ -43,9 +43,11 @@ def adapter(settings: MQTTSettings, queue: asyncio.Queue[dict[str, Any]]) -> MQT
 # ---------------------------------------------------------------------------
 
 
-def test_health_probe_unhealthy_before_connect(adapter: MQTTAdapter) -> None:
+def test_health_probe_warning_before_connect(adapter: MQTTAdapter) -> None:
+    # Disconnected state is "warning" not "unhealthy": /sse still serves, just
+    # no events.  ADR-030: degraded → 200; unhealthy → 503.  Finding 3.
     result = adapter.health_probe()
-    assert result.status == "unhealthy"
+    assert result.status == "warning"
     assert result.name == "mqtt"
     assert len(result.messages) > 0
 

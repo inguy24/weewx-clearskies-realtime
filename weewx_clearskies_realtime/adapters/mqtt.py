@@ -16,13 +16,10 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from weewx_clearskies_realtime.config.settings import MQTTSettings
 from weewx_clearskies_realtime.health import ProbeResult
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +65,16 @@ class MQTTAdapter:
 
         self._loop = loop
         client = mqtt.Client(client_id=self._settings.client_id)
+        # Activate paho's built-in exponential backoff (1 s → 120 s) — ADR-005.
+        client.reconnect_delay_set(min_delay=1, max_delay=120)
 
         if self._settings.username:
             password = self._settings.password  # resolves env var; logs warning if absent
             client.username_pw_set(self._settings.username, password)
 
         if self._settings.tls:
-            # Use default TLS context (system CA bundle).  Operators needing custom
-            # CAs should configure their system trust store.
-            client.tls_set()
+            # ca_file is optional; None falls back to the system CA bundle.
+            client.tls_set(ca_certs=self._settings.ca_file or None)
 
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
@@ -131,7 +129,10 @@ class MQTTAdapter:
             )
         elif not self._state.subscribed:
             messages.append(f"Connected but not subscribed to topic {self._settings.topic}")
-        return ProbeResult(name="mqtt", status="unhealthy", messages=messages)
+        # "warning" not "unhealthy": the /sse endpoint stays up even when
+        # disconnected (it just emits no events), so this is degraded, not down.
+        # ADR-030: degraded → 200; unhealthy → 503.
+        return ProbeResult(name="mqtt", status="warning", messages=messages)
 
     # ------------------------------------------------------------------
     # Paho callbacks (run in the paho network thread)

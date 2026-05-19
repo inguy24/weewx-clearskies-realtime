@@ -68,9 +68,9 @@ def create_health_app() -> FastAPI:
     )
 
     @app.get("/health/live")
-    async def liveness() -> dict[str, str]:
+    async def liveness() -> dict[str, Any]:
         """Liveness probe — always OK if the process is responsive."""
-        return {"status": "ok"}
+        return {"status": "ok", "checks": {}}
 
     @app.get("/health/ready")
     async def readiness() -> JSONResponse:

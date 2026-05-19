@@ -36,11 +36,11 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
         openapi_url=None,
     )
 
-    # CORS — default open for now; operators should restrict in production via
-    # a reverse proxy or by setting allow_origins in a future config field.
+    # CORS — configurable via settings.sse.allowed_origins (default "*").
+    # Operators should restrict to dashboard origin(s) in production.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.sse.allowed_origins,
         allow_methods=["GET"],
         allow_headers=["*"],
     )
