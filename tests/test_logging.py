@@ -216,6 +216,16 @@ def test_redact_nested_dict() -> None:
     assert result["outer"]["x"] == "clean"
 
 
+def test_redact_list_with_credential_string() -> None:
+    """_redact recurses into lists and redacts credential-shaped strings."""
+    result = _redact(["https://x.com?api_key=abc", "clean", {"pw": "password=hunter2"}])
+    assert isinstance(result, list)
+    assert "[REDACTED]" in result[0]
+    assert "abc" not in result[0]
+    assert result[1] == "clean"
+    assert "[REDACTED]" in result[2]["pw"]
+
+
 # ---------------------------------------------------------------------------
 # RequestIdFilter
 # ---------------------------------------------------------------------------

@@ -95,6 +95,7 @@ def _redact(value: Any) -> Any:  # noqa: ANN401
 
     - str: apply all credential patterns, return cleaned string.
     - dict: return a new dict with _redact applied recursively to each value.
+    - list: return a new list with _redact applied to each element.
     - anything else: return unchanged.
     """
     if isinstance(value, str):
@@ -103,4 +104,6 @@ def _redact(value: Any) -> Any:  # noqa: ANN401
         return value
     if isinstance(value, dict):
         return {k: _redact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
     return value
