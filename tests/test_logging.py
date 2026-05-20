@@ -158,6 +158,64 @@ def test_redaction_filter_dict_args() -> None:
     assert "[REDACTED]" in args["url"]
 
 
+def test_redaction_filter_extra_string_field() -> None:
+    """Extra string fields set via extra={} are redacted."""
+    filt = RedactionFilter()
+    record = _make_record("connecting")
+    record.broker_url = "mqtt://user:s3cret@host?password=hunter2"  # type: ignore[attr-defined]
+    filt.filter(record)
+    assert "hunter2" not in record.broker_url  # type: ignore[attr-defined]
+    assert "[REDACTED]" in record.broker_url  # type: ignore[attr-defined]
+
+
+def test_redaction_filter_extra_dict_field() -> None:
+    """Extra dict fields set via extra={} have credential strings in their values redacted."""
+    filt = RedactionFilter()
+    record = _make_record("connecting")
+    # Values contain credential-shaped substrings that the regex patterns match.
+    record.conn_info = {  # type: ignore[attr-defined]
+        "host": "mqtt.local",
+        "url": "mqtt://broker?password=hunter2",
+    }
+    filt.filter(record)
+    redacted: dict = record.conn_info  # type: ignore[attr-defined]
+    assert "hunter2" not in redacted["url"]
+    assert "[REDACTED]" in redacted["url"]
+    # Non-sensitive fields are preserved.
+    assert redacted["host"] == "mqtt.local"
+
+
+def test_redaction_filter_extra_nested_dict_field() -> None:
+    """Nested dicts in extra fields are recursed into for redaction."""
+    filt = RedactionFilter()
+    record = _make_record("auth attempt")
+    record.context = {  # type: ignore[attr-defined]
+        "outer": "clean",
+        "inner": {"endpoint": "https://api.example.com?api_key=topsecret", "safe": "value"},
+    }
+    filt.filter(record)
+    ctx: dict = record.context  # type: ignore[attr-defined]
+    assert ctx["outer"] == "clean"
+    assert "topsecret" not in ctx["inner"]["endpoint"]
+    assert "[REDACTED]" in ctx["inner"]["endpoint"]
+    assert ctx["inner"]["safe"] == "value"
+
+
+def test_redact_dict_value() -> None:
+    """_redact applied to a dict returns a new dict with credential strings cleaned."""
+    result = _redact({"url": "https://x.com?api_key=abc", "safe": "ok"})
+    assert isinstance(result, dict)
+    assert "[REDACTED]" in result["url"]
+    assert result["safe"] == "ok"
+
+
+def test_redact_nested_dict() -> None:
+    """_redact recurses into nested dicts."""
+    result = _redact({"outer": {"endpoint": "https://x.com?password=secret", "x": "clean"}})
+    assert "[REDACTED]" in result["outer"]["endpoint"]
+    assert result["outer"]["x"] == "clean"
+
+
 # ---------------------------------------------------------------------------
 # RequestIdFilter
 # ---------------------------------------------------------------------------

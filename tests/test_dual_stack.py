@@ -58,7 +58,7 @@ def test_no_duplicate_addresses() -> None:
 
 def test_ipv4_only_host() -> None:
     """An explicit IPv4 address returns only that address."""
-    addrs = _resolve_bind_addresses("0.0.0.0", 8765)
+    addrs = _resolve_bind_addresses("0.0.0.0", 8766)
     # Should contain the 0.0.0.0 entry (wildcard) — not further expanded.
     assert len(addrs) >= 1
     hosts = [a for a, _ in addrs]

@@ -1,6 +1,7 @@
 """Redaction and request-ID injection filters — ADR-029.
 
-RedactionFilter: regex-replaces patterns that look like secrets in log messages.
+RedactionFilter: regex-replaces patterns that look like secrets in log messages
+and in extra={} structured fields attached to log records.
 RequestIdFilter: injects request_id from a ContextVar into every log record.
 """
 
@@ -29,17 +30,50 @@ _REDACT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"([a-z_]*token[=:]\s*)\S+", re.IGNORECASE),
 ]
 
+# Standard LogRecord attributes that must not be treated as extra fields.
+# Mirrors the skip-set used by JsonFormatter so redaction covers the same surface.
+_STANDARD_RECORD_ATTRS: frozenset[str] = frozenset(
+    {
+        "name", "msg", "args", "created", "filename", "funcName", "levelname",
+        "levelno", "lineno", "module", "msecs", "message", "pathname",
+        "process", "processName", "relativeCreated", "stack_info", "thread",
+        "threadName", "exc_info", "exc_text", "request_id",
+        # Python 3.12+ adds taskName; include for forward-compat.
+        "taskName",
+    }
+)
+
 
 class RedactionFilter(logging.Filter):
-    """Strip credential-like substrings from log records before emission."""
+    """Strip credential-like substrings from log records before emission.
+
+    Covers three surfaces on each LogRecord:
+    - record.msg  — the message template string.
+    - record.args — format arguments (tuple or dict).
+    - Extra structured fields set via extra={} — may themselves be dicts;
+      _redact recurses into nested dicts.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Redact the message template.
         record.msg = _redact(record.msg)
+
+        # Redact format arguments.
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {k: _redact(v) for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
                 record.args = tuple(_redact(a) for a in record.args)
+
+        # Redact extra structured fields (those passed via extra={} to the
+        # logger call).  JsonFormatter emits these directly, so they must be
+        # cleaned here before the record reaches any handler.
+        for key, val in list(record.__dict__.items()):
+            if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_"):
+                redacted = _redact(val)
+                if redacted is not val:
+                    setattr(record, key, redacted)
+
         return True
 
 
@@ -57,9 +91,16 @@ class RequestIdFilter(logging.Filter):
 
 
 def _redact(value: Any) -> Any:  # noqa: ANN401
-    """Apply all redaction patterns to a string value; return non-strings unchanged."""
-    if not isinstance(value, str):
+    """Apply redaction patterns to a value.
+
+    - str: apply all credential patterns, return cleaned string.
+    - dict: return a new dict with _redact applied recursively to each value.
+    - anything else: return unchanged.
+    """
+    if isinstance(value, str):
+        for pattern in _REDACT_PATTERNS:
+            value = pattern.sub(r"\1[REDACTED]", value)
         return value
-    for pattern in _REDACT_PATTERNS:
-        value = pattern.sub(r"\1[REDACTED]", value)
+    if isinstance(value, dict):
+        return {k: _redact(v) for k, v in value.items()}
     return value

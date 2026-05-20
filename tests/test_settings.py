@@ -60,7 +60,7 @@ def test_parse_defaults() -> None:
     assert s.mqtt.qos == 0
     assert s.mqtt.keepalive == 60
     assert s.sse.bind_host == "0.0.0.0"
-    assert s.sse.bind_port == 8765
+    assert s.sse.bind_port == 8766
     assert s.health.bind_host == "127.0.0.1"
     assert s.health.bind_port == 8082
     assert s.logging.level == "INFO"
@@ -135,7 +135,7 @@ def test_load_settings_from_env_var(
             mode = mqtt
 
             [sse]
-            bind_port = 8765
+            bind_port = 8766
 
             [health]
             bind_port = 8082
