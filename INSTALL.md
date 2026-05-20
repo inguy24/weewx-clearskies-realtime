@@ -54,7 +54,14 @@ sudo mkdir -p /etc/weewx-clearskies
 
 ### 3. Create the config file
 
-Create `/etc/weewx-clearskies/realtime.conf`. A minimal config for a local broker with no authentication:
+Copy the example config bundled with the repository:
+
+```bash
+sudo cp etc/realtime.conf.example /etc/weewx-clearskies/realtime.conf
+sudo $EDITOR /etc/weewx-clearskies/realtime.conf
+```
+
+Or create `/etc/weewx-clearskies/realtime.conf` manually. A minimal config for a local broker with no authentication:
 
 ```ini
 [input]

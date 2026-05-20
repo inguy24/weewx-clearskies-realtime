@@ -1,0 +1,71 @@
+# weewx-clearskies-realtime configuration example
+# Copy to /etc/weewx-clearskies/realtime.conf and edit as needed.
+#
+# SECRETS DO NOT BELONG HERE. Use /etc/weewx-clearskies/realtime-secrets.env
+# (mode 0600) for MQTT credentials.
+#
+# Per ADR-027: any leaf key matching _(KEY|SECRET|TOKEN|PASSWORD) in this
+# file will cause the service to refuse to start with a FATAL log message.
+#
+# Format: ConfigObj/INI. Section syntax [section], nested [[subsection]].
+
+
+[input]
+# Input mode. Only mqtt is implemented in v0.1.
+mode = mqtt
+
+    [[mqtt]]
+    # MQTT broker host and port.
+    broker_host = 127.0.0.1
+    broker_port = 1883
+
+    # Topic where weewx-mqtt publishes loop packets.
+    topic = weewx/loop
+
+    # MQTT client ID. Must be unique per broker.
+    client_id = weewx-clearskies-realtime
+
+    # MQTT username (leave empty for anonymous access).
+    # username =
+
+    # Name of the environment variable that holds the MQTT password.
+    # The variable is read at startup from realtime-secrets.env.
+    # Default: WEEWX_CLEARSKIES_MQTT_PASSWORD
+    password_env = WEEWX_CLEARSKIES_MQTT_PASSWORD
+
+    # TLS settings. Set tls = true for encrypted connections.
+    # tls = false
+    # ca_file =
+
+    # MQTT QoS level (0, 1, or 2). Default 0 (at-most-once).
+    # qos = 0
+
+    # MQTT keepalive interval in seconds. Default 60.
+    # keepalive = 60
+
+
+[sse]
+# SSE endpoint bind address. 0.0.0.0 = all IPv4 interfaces.
+# Use :: for IPv6-only, localhost for loopback-only.
+bind_host = 0.0.0.0
+
+# SSE endpoint port. Default 8766.
+bind_port = 8766
+
+# Allowed origins for CORS. Set to your dashboard domain in production.
+# Use * during development only.
+allowed_origins = https://weather.example.com
+
+
+[health]
+# Health endpoint bind address. Default loopback (not publicly exposed).
+bind_host = 127.0.0.1
+
+# Health endpoint port. Default 8082.
+bind_port = 8082
+
+
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+# Override with CLEARSKIES_LOG_LEVEL env var.
+level = INFO
