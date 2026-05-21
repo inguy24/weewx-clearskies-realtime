@@ -55,7 +55,7 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
         """
         # Inject a request_id so downstream log records carry it.
         rid = str(uuid.uuid4())
-        token = request_id_var.set(rid)
+        request_id_var.set(rid)
 
         sub_q = emitter.subscribe()
         logger.info("SSE client connected", extra={"request_id": rid})
@@ -69,7 +69,11 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
                     yield event
             finally:
                 emitter.unsubscribe(sub_q)
-                request_id_var.reset(token)
+                # Do NOT call request_id_var.reset(token) here.
+                # The token was created in the sse_endpoint coroutine's context;
+                # reset() across context boundaries raises ValueError.  The
+                # ContextVar is scoped to this async task and is cleaned up
+                # automatically when the task ends.
 
         return EventSourceResponse(generator())
 
