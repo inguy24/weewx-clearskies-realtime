@@ -38,7 +38,7 @@ Each SSE event has type `loop` and a JSON payload containing the raw weewx loop-
 
 The service exposes two ports:
 
-- **`/sse` endpoint** (default `0.0.0.0:8766`) — the SSE stream. Sits behind the reverse proxy alongside the API.
+- **`/sse` endpoint** (default `:::8766`, dual-stack) — the SSE stream. Sits behind the reverse proxy alongside the API.
 - **Health port** (default `127.0.0.1:8082`) — `/health/live` and `/health/ready`. Loopback-only; not exposed to the internet.
 
 The paho-mqtt network loop runs in a background thread. Received packets are pushed into an asyncio queue and fanned out to all connected SSE clients concurrently by an `SSEEmitter` task.

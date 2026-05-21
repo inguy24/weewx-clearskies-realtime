@@ -45,9 +45,9 @@ mode = mqtt
 
 
 [sse]
-# SSE endpoint bind address. 0.0.0.0 = all IPv4 interfaces.
-# Use :: for IPv6-only, localhost for loopback-only.
-bind_host = 0.0.0.0
+# SSE endpoint bind address. :: = dual-stack (IPv4 + IPv6) on Linux (default).
+# Use 0.0.0.0 for IPv4-only, localhost for loopback-only.
+bind_host = ::
 
 # SSE endpoint port. Default 8766.
 bind_port = 8766

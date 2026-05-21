@@ -63,3 +63,19 @@ def test_ipv4_only_host() -> None:
     assert len(addrs) >= 1
     hosts = [a for a, _ in addrs]
     assert "0.0.0.0" in hosts
+
+
+def test_dual_stack_wildcard() -> None:
+    """:: resolves to an IPv6 wildcard on dual-stack hosts (the default bind_host).
+
+    On Linux with IPV6_V6ONLY unset, uvicorn binding to :: serves both families.
+    This test verifies _resolve_bind_addresses passes :: through without dropping it.
+    Skipped on IPv4-only hosts where :: cannot be resolved.
+    """
+    try:
+        addrs = _resolve_bind_addresses("::", 8766)
+    except OSError:
+        pytest.skip(":: not resolvable on this host (IPv4-only?)")
+    assert len(addrs) >= 1
+    hosts = [a for a, _ in addrs]
+    assert "::" in hosts, f":: wildcard missing from resolved addresses: {hosts}"

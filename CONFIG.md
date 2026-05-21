@@ -101,11 +101,11 @@ mode = mqtt
 
 | Key | Default | Description |
 |---|---|---|
-| `bind_host` | `0.0.0.0` | Bind address for the SSE endpoint. The default binds on all interfaces. For single-host deploys behind a reverse proxy, `127.0.0.1` or `::1` is more restrictive. |
+| `bind_host` | `::` | Bind address for the SSE endpoint. The default `::` binds dual-stack (IPv4 + IPv6) on Linux. For single-host deploys behind a reverse proxy, `127.0.0.1` or `::1` is more restrictive. |
 | `bind_port` | `8766` | TCP port for the `/sse` endpoint. |
 | `allowed_origins` | `*` | Comma-separated CORS origins. Default `*` allows any origin. Restrict to your dashboard's origin in production (e.g. `https://weather.example.com`). |
 
-**Note on bind_host:** the service resolves `bind_host` via `socket.getaddrinfo` and starts one uvicorn server per resolved address. `0.0.0.0` binds IPv4 only; `::` binds IPv6 only; `localhost` expands to both `127.0.0.1` and `::1`.
+**Note on bind_host:** the service resolves `bind_host` via `socket.getaddrinfo` and starts one uvicorn server per resolved address. `::` binds dual-stack (IPv4 + IPv6) on Linux (the default); `0.0.0.0` binds IPv4 only; `localhost` expands to both `127.0.0.1` and `::1`.
 
 **Example — restrict to loopback (single-host deploy):**
 
@@ -179,7 +179,7 @@ mode = mqtt
     keepalive = 60
 
 [sse]
-bind_host = 0.0.0.0
+bind_host = ::
 bind_port = 8766
 allowed_origins = *
 

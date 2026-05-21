@@ -59,7 +59,7 @@ def test_parse_defaults() -> None:
     assert s.mqtt.tls is False
     assert s.mqtt.qos == 0
     assert s.mqtt.keepalive == 60
-    assert s.sse.bind_host == "0.0.0.0"
+    assert s.sse.bind_host == "::"
     assert s.sse.bind_port == 8766
     assert s.health.bind_host == "127.0.0.1"
     assert s.health.bind_port == 8082

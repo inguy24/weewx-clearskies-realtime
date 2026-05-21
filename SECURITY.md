@@ -72,7 +72,7 @@ The `/sse` endpoint streams JSON objects containing weewx loop-packet fields. Th
 allowed_origins = https://weather.example.com
 ```
 
-**Binding:** by default the SSE endpoint binds to `0.0.0.0:8766`. For single-host deployments behind a reverse proxy, binding to `127.0.0.1` reduces the exposed surface:
+**Binding:** by default the SSE endpoint binds to `:::8766` (dual-stack, IPv4 + IPv6). For single-host deployments behind a reverse proxy, binding to `127.0.0.1` reduces the exposed surface:
 
 ```ini
 [sse]

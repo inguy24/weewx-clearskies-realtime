@@ -71,7 +71,9 @@ class MQTTSettings:
 
 @dataclass
 class SSESettings:
-    bind_host: str = "0.0.0.0"
+    # Default :: = dual-stack (IPv4 + IPv6) per coding.md §1.  Uvicorn binds
+    # both families on Linux when IPV6_V6ONLY is unset (the kernel default).
+    bind_host: str = "::"
     bind_port: int = 8766
     # Comma-separated origins for CORS.  Default "*" (open) — operators should
     # restrict in production via config or a reverse proxy.
@@ -197,7 +199,7 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
     if not _allowed_origins:
         _allowed_origins = ["*"]
     s.sse = SSESettings(
-        bind_host=str(sse_raw.get("bind_host", "0.0.0.0")).strip(),
+        bind_host=str(sse_raw.get("bind_host", "::")).strip(),
         bind_port=int(sse_raw.get("bind_port", 8766)),
         allowed_origins=_allowed_origins,
     )
