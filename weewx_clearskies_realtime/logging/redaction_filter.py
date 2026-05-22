@@ -34,10 +34,28 @@ _REDACT_PATTERNS: list[re.Pattern[str]] = [
 # Mirrors the skip-set used by JsonFormatter so redaction covers the same surface.
 _STANDARD_RECORD_ATTRS: frozenset[str] = frozenset(
     {
-        "name", "msg", "args", "created", "filename", "funcName", "levelname",
-        "levelno", "lineno", "module", "msecs", "message", "pathname",
-        "process", "processName", "relativeCreated", "stack_info", "thread",
-        "threadName", "exc_info", "exc_text", "request_id",
+        "name",
+        "msg",
+        "args",
+        "created",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "message",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+        "exc_info",
+        "exc_text",
+        "request_id",
         # Python 3.12+ adds taskName; include for forward-compat.
         "taskName",
     }

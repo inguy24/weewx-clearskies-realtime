@@ -1,4 +1,4 @@
-"""Tests for config.settings — load_settings(), secret-leak guard, _parse()."""
+"""Tests for config.settings -- load_settings(), secret-leak guard, _parse()."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from weewx_clearskies_realtime.config.settings import (
+    DirectSettings,
     Settings,
     _check_no_secrets,
     _parse,
@@ -46,13 +47,13 @@ def test_check_no_secrets_nested() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _parse() — defaults when config dict is empty
+# _parse() -- defaults when config dict is empty
 # ---------------------------------------------------------------------------
 
 
 def test_parse_defaults() -> None:
     s = _parse({})
-    assert s.input.mode == "mqtt"
+    assert s.input.mode == "direct"
     assert s.mqtt.broker_host == "localhost"
     assert s.mqtt.broker_port == 1883
     assert s.mqtt.topic == "weewx/loop"
@@ -94,7 +95,7 @@ def test_parse_overrides() -> None:
 
 def test_parse_tls_false_variants() -> None:
     for falsy in ("false", "0", "no", "False"):
-        raw = {"input": {"mqtt": {"tls": falsy}}}
+        raw = {"input": {"mode": "mqtt", "mqtt": {"tls": falsy}}}
         s = _parse(raw)
         assert s.mqtt.tls is False
 
@@ -106,7 +107,62 @@ def test_parse_env_var_overrides_log_level(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 # ---------------------------------------------------------------------------
-# load_settings() — file search and fail-closed
+# New: default mode is "direct"
+# ---------------------------------------------------------------------------
+
+
+def test_parse_default_mode_is_direct() -> None:
+    """ADR-005: default input mode must be 'direct', not 'mqtt'."""
+    s = _parse({})
+    assert s.input.mode == "direct"
+
+
+# ---------------------------------------------------------------------------
+# New: DirectSettings default socket_path
+# ---------------------------------------------------------------------------
+
+
+def test_direct_settings_default_socket_path() -> None:
+    d = DirectSettings()
+    assert d.socket_path == "/var/run/weewx-clearskies/loop.sock"
+
+
+def test_parse_direct_settings_defaults() -> None:
+    s = _parse({})
+    assert s.input.direct.socket_path == "/var/run/weewx-clearskies/loop.sock"
+
+
+# ---------------------------------------------------------------------------
+# New: parsing [[direct]] subsection
+# ---------------------------------------------------------------------------
+
+
+def test_parse_direct_section_custom_socket_path() -> None:
+    raw = {
+        "input": {
+            "mode": "direct",
+            "direct": {
+                "socket_path": "/tmp/custom.sock",  # noqa: S108
+            },
+        }
+    }
+    s = _parse(raw)
+    assert s.input.mode == "direct"
+    assert s.input.direct.socket_path == "/tmp/custom.sock"  # noqa: S108
+
+
+# ---------------------------------------------------------------------------
+# New: unknown mode raises ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_parse_unknown_mode_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="Invalid input mode"):
+        _parse({"input": {"mode": "websocket"}})
+
+
+# ---------------------------------------------------------------------------
+# load_settings() -- file search and fail-closed
 # ---------------------------------------------------------------------------
 
 
@@ -115,6 +171,7 @@ def test_load_settings_no_config_raises(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("CLEARSKIES_CONFIG", raising=False)
     # Point search paths at non-existent files by monkey-patching the module list.
     import weewx_clearskies_realtime.config.settings as settings_mod
+
     orig = settings_mod._SEARCH_PATHS
     settings_mod._SEARCH_PATHS = ["/nonexistent/path/realtime.conf"]
     try:
@@ -124,15 +181,13 @@ def test_load_settings_no_config_raises(monkeypatch: pytest.MonkeyPatch) -> None
         settings_mod._SEARCH_PATHS = orig
 
 
-def test_load_settings_from_env_var(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_settings_from_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """CLEARSKIES_CONFIG env var is honoured."""
     conf = tmp_path / "realtime.conf"
     conf.write_text(
         textwrap.dedent("""
             [input]
-            mode = mqtt
+            mode = direct
 
             [sse]
             bind_port = 8766
@@ -147,12 +202,10 @@ def test_load_settings_from_env_var(
     monkeypatch.setenv("CLEARSKIES_CONFIG", str(conf))
     s = load_settings()
     assert isinstance(s, Settings)
-    assert s.input.mode == "mqtt"
+    assert s.input.mode == "direct"
 
 
-def test_load_settings_rejects_secret_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_settings_rejects_secret_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Config containing a secret-like key raises RuntimeError."""
     conf = tmp_path / "realtime.conf"
     conf.write_text("[input]\nmqtt_password = oops\n")
@@ -188,7 +241,7 @@ def test_mqtt_password_missing_env_logs_warning(
 
 
 def test_mqtt_password_none_when_no_username(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No warning when username is empty — anonymous connection is expected."""
+    """No warning when username is empty -- anonymous connection is expected."""
     from weewx_clearskies_realtime.config.settings import MQTTSettings
 
     monkeypatch.delenv("WEEWX_CLEARSKIES_MQTT_PASSWORD", raising=False)

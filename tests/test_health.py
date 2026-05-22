@@ -112,9 +112,7 @@ def test_readiness_ok_probe(client: TestClient) -> None:
 
 
 def test_readiness_unhealthy_probe_returns_503(client: TestClient) -> None:
-    register_readiness_probe(
-        lambda: ProbeResult("mqtt", "unhealthy", ["broker unreachable"])
-    )
+    register_readiness_probe(lambda: ProbeResult("mqtt", "unhealthy", ["broker unreachable"]))
     resp = client.get("/health/ready")
     assert resp.status_code == 503
 

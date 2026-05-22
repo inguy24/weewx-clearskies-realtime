@@ -5,7 +5,7 @@ Config file search order:
   2. /etc/weewx-clearskies/realtime.conf
   3. ~/.config/weewx-clearskies/realtime.conf
 
-No config found → FileNotFoundError (fail-closed).
+No config found -> FileNotFoundError (fail-closed).
 
 Secret-leak guard: any key matching _(KEY|SECRET|TOKEN|PASSWORD)$ (case-insensitive)
 in the INI tree raises RuntimeError.  Secrets come only from env vars.
@@ -30,6 +30,10 @@ _SEARCH_PATHS: list[str] = [
     str(Path("~/.config/weewx-clearskies/realtime.conf").expanduser()),
 ]
 
+_VALID_MODES = frozenset({"direct", "mqtt"})
+
+_DEFAULT_SOCKET_PATH = "/var/run/weewx-clearskies/loop.sock"
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -37,8 +41,14 @@ _SEARCH_PATHS: list[str] = [
 
 
 @dataclass
+class DirectSettings:
+    socket_path: str = _DEFAULT_SOCKET_PATH
+
+
+@dataclass
 class InputSettings:
-    mode: str = "mqtt"
+    mode: str = "direct"
+    direct: DirectSettings = field(default_factory=DirectSettings)
 
 
 @dataclass
@@ -48,10 +58,10 @@ class MQTTSettings:
     topic: str = "weewx/loop"
     client_id: str = "weewx-clearskies-realtime"
     username: str = ""
-    # Name of the env var that holds the MQTT password — never the password itself.
+    # Name of the env var that holds the MQTT password -- never the password itself.
     password_env: str = "WEEWX_CLEARSKIES_MQTT_PASSWORD"  # noqa: S105
     tls: bool = False
-    # Path to a PEM CA bundle for broker TLS verification.  Empty string → use
+    # Path to a PEM CA bundle for broker TLS verification.  Empty string -> use
     # the system CA bundle (paho default).  ADR-005 §Config.
     ca_file: str = ""
     qos: int = 0
@@ -75,7 +85,7 @@ class SSESettings:
     # both families on Linux when IPV6_V6ONLY is unset (the kernel default).
     bind_host: str = "::"
     bind_port: int = 8766
-    # Comma-separated origins for CORS.  Default "*" (open) — operators should
+    # Comma-separated origins for CORS.  Default "*" (open) -- operators should
     # restrict in production via config or a reverse proxy.
     allowed_origins: list[str] = field(default_factory=lambda: ["*"])
 
@@ -172,8 +182,18 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
     s = Settings()
 
     inp = raw.get("input", {})
+    mode = str(inp.get("mode", "direct")).strip()
+    if mode not in _VALID_MODES:
+        raise ValueError(f"Invalid input mode {mode!r}. Must be one of: {sorted(_VALID_MODES)}")
+
+    direct_raw = inp.get("direct", {})
+    direct_settings = DirectSettings(
+        socket_path=str(direct_raw.get("socket_path", _DEFAULT_SOCKET_PATH)).strip(),
+    )
+
     s.input = InputSettings(
-        mode=str(inp.get("mode", "mqtt")).strip(),
+        mode=mode,
+        direct=direct_settings,
     )
 
     mqtt_raw = inp.get("mqtt", {})
@@ -183,9 +203,7 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
         topic=str(mqtt_raw.get("topic", "weewx/loop")).strip(),
         client_id=str(mqtt_raw.get("client_id", "weewx-clearskies-realtime")).strip(),
         username=str(mqtt_raw.get("username", "")).strip(),
-        password_env=str(
-            mqtt_raw.get("password_env", "WEEWX_CLEARSKIES_MQTT_PASSWORD")
-        ).strip(),
+        password_env=str(mqtt_raw.get("password_env", "WEEWX_CLEARSKIES_MQTT_PASSWORD")).strip(),
         tls=str(mqtt_raw.get("tls", "false")).strip().lower() in ("true", "1", "yes"),
         ca_file=str(mqtt_raw.get("ca_file", "")).strip(),
         qos=int(mqtt_raw.get("qos", 0)),

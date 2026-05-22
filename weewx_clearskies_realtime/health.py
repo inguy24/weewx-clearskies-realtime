@@ -94,9 +94,7 @@ def _run_probes() -> list[ProbeResult]:
             results.append(probe())
         except Exception as exc:  # noqa: BLE001
             logger.error("Readiness probe raised an exception", exc_info=exc)
-            results.append(
-                ProbeResult(name="unknown", status="unhealthy", messages=[str(exc)])
-            )
+            results.append(ProbeResult(name="unknown", status="unhealthy", messages=[str(exc)]))
     return results
 
 

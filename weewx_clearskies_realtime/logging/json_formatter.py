@@ -44,10 +44,28 @@ class JsonFormatter(logging.Formatter):
         # Include any extra structured fields attached by the caller
         # (i.e. fields passed as extra={...} to logger.info()).
         _skip = {
-            "name", "msg", "args", "created", "filename", "funcName", "levelname",
-            "levelno", "lineno", "module", "msecs", "message", "pathname",
-            "process", "processName", "relativeCreated", "stack_info", "thread",
-            "threadName", "exc_info", "exc_text", "request_id",
+            "name",
+            "msg",
+            "args",
+            "created",
+            "filename",
+            "funcName",
+            "levelname",
+            "levelno",
+            "lineno",
+            "module",
+            "msecs",
+            "message",
+            "pathname",
+            "process",
+            "processName",
+            "relativeCreated",
+            "stack_info",
+            "thread",
+            "threadName",
+            "exc_info",
+            "exc_text",
+            "request_id",
         }
         for key, val in record.__dict__.items():
             if key not in _skip and not key.startswith("_"):

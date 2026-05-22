@@ -120,9 +120,7 @@ class SSEEmitter:
                 except asyncio.QueueFull:
                     # Subscriber's buffer is full — it's too slow.  Drop and log.
                     stalled.append(sub_q)
-                    logger.warning(
-                        "SSE subscriber queue full; dropping packet for stalled client"
-                    )
+                    logger.warning("SSE subscriber queue full; dropping packet for stalled client")
 
             # Remove stalled subscribers so they don't keep piling up dropped packets.
             for sub_q in stalled:

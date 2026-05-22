@@ -114,6 +114,7 @@ async def test_event_generator_yields_loop_event(emitter: SSEEmitter) -> None:
     assert events[0]["event"] == "loop"
 
     import json
+
     data = json.loads(events[0]["data"])
     assert data["outTemp"] == pytest.approx(25.0)
     emitter.unsubscribe(sub_q)

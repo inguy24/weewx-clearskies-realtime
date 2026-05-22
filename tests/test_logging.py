@@ -91,9 +91,15 @@ def test_json_formatter_exception_included() -> None:
         raise ValueError("boom")
     except ValueError:
         import sys
+
         record = logging.LogRecord(
-            name="t", level=logging.ERROR, pathname="", lineno=0,
-            msg="err", args=(), exc_info=sys.exc_info(),
+            name="t",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="err",
+            args=(),
+            exc_info=sys.exc_info(),
         )
     obj = json.loads(fmt.format(record))
     assert "exc_info" in obj

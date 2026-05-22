@@ -76,9 +76,7 @@ def test_unknown_route_is_404(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cors_preflight_returns_allow_origin(
-    settings: Settings, emitter: SSEEmitter
-) -> None:
+def test_cors_preflight_returns_allow_origin(settings: Settings, emitter: SSEEmitter) -> None:
     """OPTIONS pre-flight for CORS returns the Access-Control-Allow-Origin header."""
     app = create_app(settings, emitter)
     tc = TestClient(app, raise_server_exceptions=False)
