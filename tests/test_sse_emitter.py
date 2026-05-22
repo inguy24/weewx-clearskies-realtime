@@ -148,3 +148,55 @@ async def test_stop_sends_sentinel_to_subscribers(emitter: SSEEmitter) -> None:
     # stop() cancelled the fanout before sentinel arrives — either is ok.
     await asyncio.sleep(0.05)
     # The generator would stop cleanly; just check no exception is raised.
+
+
+# ---------------------------------------------------------------------------
+# Keepalive
+# ---------------------------------------------------------------------------
+
+
+async def test_event_generator_emits_keepalive_when_idle(emitter: SSEEmitter) -> None:
+    """event_generator yields a keepalive comment when no packet arrives within
+    KEEPALIVE_INTERVAL_SECONDS.  We patch the interval to near-zero so the
+    test completes quickly without real wall-clock waiting.
+    """
+    import weewx_clearskies_realtime.sse.emitter as emitter_mod
+
+    original = emitter_mod.KEEPALIVE_INTERVAL_SECONDS
+    emitter_mod.KEEPALIVE_INTERVAL_SECONDS = 0.05  # type: ignore[assignment]
+    try:
+        sub_q = emitter.subscribe()
+
+        # Collect the first event from the generator, then cancel it so the
+        # test doesn't block forever on the next q.get().
+        gen = emitter.event_generator(sub_q)
+        first_event = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
+
+        assert first_event == {"comment": "keepalive"}, (
+            f"Expected keepalive comment, got {first_event!r}"
+        )
+
+        # Clean up: send sentinel so the generator terminates cleanly.
+        await sub_q.put(None)
+        await gen.aclose()
+        emitter.unsubscribe(sub_q)
+    finally:
+        emitter_mod.KEEPALIVE_INTERVAL_SECONDS = original  # type: ignore[assignment]
+
+
+async def test_event_generator_yields_event_before_keepalive(emitter: SSEEmitter) -> None:
+    """A packet arriving before the keepalive timeout is yielded as a loop
+    event, not a keepalive comment."""
+    sub_q = emitter.subscribe()
+    packet = {"outTemp": 19.0}
+    await sub_q.put(packet)
+    await sub_q.put(None)  # sentinel to stop generator
+
+    events = []
+    async for event in emitter.event_generator(sub_q):
+        events.append(event)
+
+    assert len(events) == 1
+    assert events[0]["event"] == "loop"
+    assert "keepalive" not in str(events[0])
+    emitter.unsubscribe(sub_q)

@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # are dropped for that subscriber rather than blocking the fan-out task.
 _SUBSCRIBER_QUEUE_MAX = 64
 
+# ADR-002: SSE keepalive comment emitted when no real event arrives within
+# this window.  Prevents corporate proxies and mobile-network NAT from
+# treating idle SSE connections as dead and closing them.
+KEEPALIVE_INTERVAL_SECONDS = 15
+
 
 class SSEEmitter:
     """Fan-out from a single source queue to N subscriber queues."""
@@ -84,13 +89,23 @@ class SSEEmitter:
         """Async generator that yields SSE events from a subscriber queue.
 
         Yields dicts expected by sse-starlette's EventSourceResponse:
-          {"event": "loop", "data": "<json>"}
+          {"event": "loop", "data": "<json>"}   — real loop-packet event
+          {"comment": "keepalive"}               — idle keepalive (ADR-002)
 
         Stops when a None sentinel is received (client disconnect or shutdown).
         """
         try:
             while True:
-                packet = await q.get()
+                try:
+                    packet = await asyncio.wait_for(
+                        q.get(), timeout=KEEPALIVE_INTERVAL_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    # No packet arrived within the keepalive window.  Emit an
+                    # SSE comment so proxies and mobile networks do not treat
+                    # the idle connection as dead and close it (ADR-002).
+                    yield {"comment": "keepalive"}
+                    continue
                 if packet is None:
                     # Sentinel — emitter is shutting down or client disconnected.
                     break
