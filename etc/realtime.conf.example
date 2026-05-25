@@ -45,9 +45,12 @@ mode = mqtt
 
 
 [sse]
-# SSE endpoint bind address. :: = dual-stack (IPv4 + IPv6) on Linux (default).
-# Use 0.0.0.0 for IPv4-only, localhost for loopback-only.
-bind_host = ::
+# SSE endpoint bind address.
+# 0.0.0.0 = all IPv4 interfaces (default; reliable behind a reverse proxy).
+# Do NOT use :: here: uvicorn sets IPV6_V6ONLY=1 on IPv6 sockets, so :: is
+# IPv6-only regardless of the kernel net.ipv6.bindv6only setting.
+# Use 127.0.0.1 for loopback-only (same-host topology).
+bind_host = 0.0.0.0
 
 # SSE endpoint port. Default 8766.
 bind_port = 8766
