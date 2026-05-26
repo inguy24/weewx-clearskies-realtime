@@ -74,7 +74,7 @@ mode = mqtt
     client_id = weewx-clearskies-realtime
 
 [sse]
-bind_host = ::
+bind_host = 0.0.0.0
 bind_port = 8766
 allowed_origins = https://weather.example.com
 

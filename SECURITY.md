@@ -72,7 +72,7 @@ The `/sse` endpoint streams JSON objects containing weewx loop-packet fields. Th
 allowed_origins = https://weather.example.com
 ```
 
-**Binding:** by default the SSE endpoint binds to `:::8766` (dual-stack, IPv4 + IPv6). For single-host deployments behind a reverse proxy, binding to `127.0.0.1` reduces the exposed surface:
+**Binding:** by default the SSE endpoint binds to `0.0.0.0:8766` (all IPv4 interfaces). Do NOT use `::` — uvicorn sets `IPV6_V6ONLY=1` on IPv6 sockets, making `::` IPv6-only regardless of the kernel `net.ipv6.bindv6only` setting. For single-host deployments behind a reverse proxy, binding to `127.0.0.1` reduces the exposed surface:
 
 ```ini
 [sse]
