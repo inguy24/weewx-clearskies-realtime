@@ -14,6 +14,7 @@ Design notes:
 from __future__ import annotations
 
 from .conversion import convert
+from .derived import beaufort, comfort_index
 from .groups import OBS_GROUP, UNIT_SYSTEMS, VALID_UNITS, get_source_unit  # noqa: F401
 from .labels import format_value, get_label
 
@@ -118,6 +119,28 @@ class UnitTransformer:
                 "formatted": format_value(converted, target_unit, self._format_overrides),
             }
 
+        # --- Derived fields ---
+        # Computed from raw values + us_units so we work in the original unit
+        # system rather than back-converting from display units.
+
+        raw_wind = data.get("windSpeed")
+        if raw_wind is not None:
+            src_wind = get_source_unit("windSpeed", us_units)
+            if src_wind is not None:
+                try:
+                    result["beaufort"] = beaufort(float(raw_wind), src_wind)
+                except (ValueError, TypeError):
+                    pass
+
+        raw_temp = data.get("outTemp")
+        if raw_temp is not None:
+            src_temp = get_source_unit("outTemp", us_units)
+            if src_temp is not None:
+                try:
+                    result["comfortIndex"] = comfort_index(float(raw_temp), src_temp)
+                except (ValueError, TypeError):
+                    pass
+
         return result
 
     def transform_field(
@@ -170,6 +193,39 @@ class UnitTransformer:
             "label": get_label(target_unit, self._label_overrides),
             "formatted": format_value(converted, target_unit, self._format_overrides),
         }
+
+    def add_derived_fields(self, record: dict[str, object]) -> None:
+        """Add Beaufort and comfortIndex from already-converted display values.
+
+        Mutates *record* in place.  Called after all individual fields have
+        been transformed (MQTT path), so values are already in display units.
+
+        Args:
+            record: Converted record dict (field → ConvertedValue dict or raw).
+        """
+        wind_entry = record.get("windSpeed")
+        if isinstance(wind_entry, dict) and wind_entry.get("value") is not None:
+            target_speed = self._targets.get("group_speed")
+            if target_speed is not None:
+                try:
+                    record["beaufort"] = beaufort(
+                        float(wind_entry["value"]),  # type: ignore[arg-type]
+                        target_speed,
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+        temp_entry = record.get("outTemp")
+        if isinstance(temp_entry, dict) and temp_entry.get("value") is not None:
+            target_temp = self._targets.get("group_temperature")
+            if target_temp is not None:
+                try:
+                    record["comfortIndex"] = comfort_index(
+                        float(temp_entry["value"]),  # type: ignore[arg-type]
+                        target_temp,
+                    )
+                except (ValueError, TypeError):
+                    pass
 
     # ------------------------------------------------------------------
     # Private helpers

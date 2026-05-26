@@ -192,4 +192,6 @@ def convert_mqtt_packet(
                     "formatted": str(raw_value) if raw_value is not None else "N/A",
                 }
 
+    transformer.add_derived_fields(result)
+
     return result
