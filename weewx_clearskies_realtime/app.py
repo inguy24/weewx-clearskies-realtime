@@ -6,11 +6,13 @@ REST requests to the upstream API (ADR-041 BFF role).
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,11 +21,11 @@ from sse_starlette.sse import EventSourceResponse  # type: ignore[import-untyped
 
 from weewx_clearskies_realtime.config.settings import Settings
 from weewx_clearskies_realtime.logging.redaction_filter import request_id_var
+from weewx_clearskies_realtime.mqtt_fields import convert_mqtt_packet
 from weewx_clearskies_realtime.proxy import close as close_proxy
 from weewx_clearskies_realtime.proxy import configure as configure_proxy
 from weewx_clearskies_realtime.proxy import router as proxy_router
-from weewx_clearskies_realtime.sse.emitter import SSEEmitter
-from weewx_clearskies_realtime.units.groups import US_UNITS
+from weewx_clearskies_realtime.sse.emitter import KEEPALIVE_INTERVAL_SECONDS, SSEEmitter
 from weewx_clearskies_realtime.units.transformer import UnitTransformer
 
 logger = logging.getLogger(__name__)
@@ -33,9 +35,8 @@ def _build_transformer(settings: Settings) -> UnitTransformer | None:
     """Build a UnitTransformer from operator unit config, or None if not configured."""
     target_units = settings.units.groups
     if not target_units:
-        # No operator unit config — use US_UNITS as passthrough default so the
-        # transformer exists and can annotate values even without explicit config.
-        # Returning None disables conversion entirely.
+        # No operator unit config — returning None disables conversion; the
+        # SSE emitter will broadcast raw (suffixed) packets unchanged.
         return None
     return UnitTransformer(
         target_units=target_units,
@@ -100,7 +101,8 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
 
         Each event has:
           type: "loop"
-          data: JSON-serialised loop-packet dict
+          data: JSON-serialised loop-packet dict (values converted to display
+                units when a UnitTransformer is configured — ADR-041 BFF).
         """
         # Inject a request_id so downstream log records carry it.
         rid = str(uuid.uuid4())
@@ -111,11 +113,40 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
 
         async def generator() -> AsyncIterator[dict[str, str]]:
             try:
-                async for event in emitter.event_generator(sub_q):
+                while True:
+                    try:
+                        packet: dict[str, Any] | None = await asyncio.wait_for(
+                            sub_q.get(), timeout=KEEPALIVE_INTERVAL_SECONDS
+                        )
+                    except asyncio.TimeoutError:
+                        # No packet within keepalive window — emit SSE comment
+                        # so proxies and mobile NAT don't treat idle as dead.
+                        yield {"comment": "keepalive"}
+                        continue
+
+                    if packet is None:
+                        # Sentinel — emitter shutting down.
+                        break
+
                     if await request.is_disconnected():
                         logger.info("SSE client disconnected", extra={"request_id": rid})
                         break
-                    yield event
+
+                    # Apply unit conversion when a transformer is configured
+                    # (ADR-041 BFF: MQTT packets carry suffixed field names and
+                    # raw values; convert to display units before broadcasting).
+                    if transformer is not None:
+                        try:
+                            packet = convert_mqtt_packet(packet, transformer)
+                        except Exception:
+                            logger.warning(
+                                "MQTT packet conversion failed — emitting raw",
+                                exc_info=True,
+                            )
+
+                    yield {"event": "loop", "data": json.dumps(packet, default=str)}
+            except asyncio.CancelledError:
+                pass
             finally:
                 emitter.unsubscribe(sub_q)
                 # Do NOT call request_id_var.reset(token) here.
