@@ -235,6 +235,11 @@ def main() -> None:
     # Register adapter health probe.
     register_readiness_probe(adapter.health_probe)
 
+    # Register upstream API health probe if proxy is configured (ADR-041).
+    if settings.api.upstream_url:
+        from weewx_clearskies_realtime.proxy import upstream_health_probe
+        register_readiness_probe(upstream_health_probe)
+
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
     # Step 6: run.

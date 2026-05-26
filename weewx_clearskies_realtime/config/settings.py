@@ -20,6 +20,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Default 16-point compass ordinate labels (weewx default order).
+_DEFAULT_ORDINATES: list[str] = [
+    "N", "NNE", "NE", "ENE",
+    "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW",
+    "W", "WNW", "NW", "NNW",
+]
+
 logger = logging.getLogger(__name__)
 
 # Regex that catches common secret-like key names in config files.
@@ -104,12 +112,36 @@ class LoggingSettings:
 
 
 @dataclass
+class ApiSettings:
+    # Upstream API URL for BFF proxy mode (ADR-041).  Empty = proxy disabled.
+    upstream_url: str = ""
+    timeout: int = 30
+    # Disable TLS verification by default — API is on the LAN; operators can
+    # enable verification when they have a valid cert on the weewx host.
+    tls_verify: bool = False
+
+
+@dataclass
+class UnitSettings:
+    # Maps group_name → target unit string (e.g. "group_temperature" → "degree_F").
+    groups: dict[str, str] = field(default_factory=dict)
+    # Maps unit → display label override (e.g. "degree_F" → " °F").
+    labels: dict[str, str] = field(default_factory=dict)
+    # Maps unit → format string override (e.g. "degree_F" → "%.1f").
+    string_formats: dict[str, str] = field(default_factory=dict)
+    # 16-point compass ordinate labels, N through NNW.
+    ordinates: list[str] = field(default_factory=lambda: list(_DEFAULT_ORDINATES))
+
+
+@dataclass
 class Settings:
     input: InputSettings = field(default_factory=InputSettings)
     mqtt: MQTTSettings = field(default_factory=MQTTSettings)
     sse: SSESettings = field(default_factory=SSESettings)
     health: HealthSettings = field(default_factory=HealthSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
+    api: ApiSettings = field(default_factory=ApiSettings)
+    units: UnitSettings = field(default_factory=UnitSettings)
 
 
 # ---------------------------------------------------------------------------
@@ -235,5 +267,51 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
     # env var overrides config file
     level = os.environ.get("CLEARSKIES_LOG_LEVEL", level_raw).upper()
     s.logging = LoggingSettings(level=level)
+
+    api_raw = raw.get("api", {})
+    s.api = ApiSettings(
+        upstream_url=str(api_raw.get("upstream_url", "")).strip().rstrip("/"),
+        timeout=int(api_raw.get("timeout", 30)),
+        tls_verify=str(api_raw.get("tls_verify", "false")).strip().lower()
+        in ("true", "1", "yes"),
+    )
+
+    units_raw = raw.get("units", {})
+    groups_raw = units_raw.get("groups", {})
+    labels_raw = units_raw.get("labels", {})
+    string_formats_raw = units_raw.get("string_formats", {})
+    ordinates_raw = units_raw.get("ordinates", {})
+
+    # ConfigObj exposes [[groups]] as a dict-like subsection; convert to plain dict.
+    groups: dict[str, str] = {str(k): str(v) for k, v in groups_raw.items()} if groups_raw else {}
+    labels: dict[str, str] = {str(k): str(v) for k, v in labels_raw.items()} if labels_raw else {}
+    string_formats: dict[str, str] = (
+        {str(k): str(v) for k, v in string_formats_raw.items()} if string_formats_raw else {}
+    )
+
+    # [[ordinates]] has a single key "directions" whose value is a comma-separated
+    # string (or a list when ConfigObj parses comma-separated values automatically).
+    ordinates: list[str] = list(_DEFAULT_ORDINATES)
+    if ordinates_raw:
+        directions = ordinates_raw.get("directions", "")
+        if isinstance(directions, list):
+            # ConfigObj may auto-parse "N, NNE, ..." into a list.
+            parsed = [d.strip() for d in directions if d.strip()]
+        else:
+            parsed = [d.strip() for d in str(directions).split(",") if d.strip()]
+        if len(parsed) == 16:  # noqa: PLR2004
+            ordinates = parsed
+        elif parsed:
+            logger.warning(
+                "ordinates.directions has %d entries; expected 16 — using defaults",
+                len(parsed),
+            )
+
+    s.units = UnitSettings(
+        groups=groups,
+        labels=labels,
+        string_formats=string_formats,
+        ordinates=ordinates,
+    )
 
     return s

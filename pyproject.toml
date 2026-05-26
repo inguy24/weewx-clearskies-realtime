@@ -14,6 +14,7 @@ dependencies = [
     "uvicorn[standard]==0.41.0",
     "sse-starlette==3.3.2",
     "configobj==5.0.9",
+    "httpx>=0.28.0",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +24,8 @@ dev = [
     "mypy==1.15.0",
     "pytest",
     "pytest-asyncio",
-    "httpx",
+    "httpx>=0.28.0",
+    "respx",
 ]
 
 [project.scripts]
