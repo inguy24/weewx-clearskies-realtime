@@ -293,7 +293,22 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
         us_units = _infer_us_units(units_block)
         try:
             converted_obs = _transformer.transform_record(obs_payload, us_units)
-            return {**data, "data": converted_obs}
+            # transform_record returns {value, label, formatted} dicts for
+            # numeric observations.  The dashboard expects a flat shape — numeric
+            # values in "data" and unit labels already in the "units" envelope —
+            # so extract just the rounded numeric value from each converted entry.
+            # String pass-throughs (e.g. weatherText.value, timestamp) and
+            # unknown fields remain unchanged.
+            flattened: dict[str, object] = {}
+            for key, val in converted_obs.items():
+                if isinstance(val, dict) and "value" in val:
+                    # Numeric observation or weatherText: extract the value field.
+                    # For weatherText the value is a plain string; for numeric
+                    # observations it is a float or None — both are correct here.
+                    flattened[key] = val["value"]
+                else:
+                    flattened[key] = val
+            return {**data, "data": flattened}
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")
 

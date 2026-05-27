@@ -308,17 +308,21 @@ def test_infer_us_units_unknown_defaults_to_us() -> None:
 
 @respx.mock
 def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> None:
-    """13. /current US envelope: numeric values are formatted, envelope preserved."""
+    """13. /current US envelope: flat rounded values returned, envelope preserved.
+
+    The proxy flattens transform_record's {value, label, formatted} dicts into
+    plain scalar values so the React dashboard can render them directly.  Unit
+    labels remain in the top-level "units" dict; the "data" dict holds only values.
+    """
     # Upstream returns the clearskies-api /current shape: flat observation dict
     # under "data", display labels under "units".  Values are in US units
-    # (°F, mph, inHg).  The transformer is configured to convert to Metric.
+    # (°F, mph).  The transformer is configured to convert to Metric.
     upstream_data = {
         "data": {
             "timestamp": "2026-05-27T00:40:00Z",
             "outTemp": 32.0,   # °F → 0°C after conversion
-            "windSpeed": 10.0, # mph → 16.09 km/h
+            "windSpeed": 10.0, # mph → ~16.09 km/h
             "outHumidity": 65.0,
-            "weatherText": "Clear",
             "extras": {"foo": "bar"},
         },
         "units": {
@@ -342,29 +346,36 @@ def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> 
     # Envelope-level metadata preserved unchanged.
     assert body["source"] == "weewx"
     assert body["generatedAt"] == "2026-05-27T00:44:44Z"
+    # "units" label block must remain in the envelope (provides the labels that
+    # were previously embedded in each nested dict).
+    assert body["units"] == upstream_data["units"]
 
     obs = body["data"]
 
-    # outTemp: 32 °F → 0 °C; transformer targets degree_C.
+    # outTemp: 32 °F → 0 °C; flat scalar value (not a nested dict).
     assert "outTemp" in obs
     out_temp = obs["outTemp"]
-    assert isinstance(out_temp, dict), f"expected ConvertedValue dict, got {out_temp!r}"
-    assert out_temp["value"] == pytest.approx(0.0, abs=1e-9)
-    assert out_temp["label"] == "°C"
-    assert out_temp["formatted"] == "0.0"
+    assert not isinstance(out_temp, dict), (
+        f"expected flat scalar, got nested dict {out_temp!r} — "
+        "proxy must flatten transform_record output for the /current envelope"
+    )
+    assert out_temp == pytest.approx(0.0, abs=1e-9)
 
-    # windSpeed: 10 mph → ~16.09 km/h; formatted as integer (%.0f).
+    # windSpeed: 10 mph → ~16.09 km/h; flat scalar.
     wind = obs["windSpeed"]
-    assert isinstance(wind, dict)
-    assert wind["value"] == pytest.approx(16.09344, rel=1e-4)
-    assert wind["label"] == " km/h"
-    assert wind["formatted"] == "16"
+    assert not isinstance(wind, dict), f"expected flat scalar, got {wind!r}"
+    assert wind == pytest.approx(16.09344, rel=1e-4)
 
-    # outHumidity: group_percent → percent (no conversion); formatted as integer.
+    # outHumidity: group_percent → percent (no conversion); flat scalar.
     humidity = obs["outHumidity"]
-    assert isinstance(humidity, dict)
-    assert humidity["value"] == pytest.approx(65.0, abs=1e-9)
-    assert humidity["formatted"] == "65"
+    assert not isinstance(humidity, dict), f"expected flat scalar, got {humidity!r}"
+    assert humidity == pytest.approx(65.0, abs=1e-9)
+
+    # weatherText: transform_record always adds this; its value is a plain string.
+    weather_text = obs.get("weatherText")
+    assert isinstance(weather_text, str), (
+        f"expected weatherText to be a plain string, got {weather_text!r}"
+    )
 
     # timestamp is a string, not a known observation → passed through raw.
     assert obs["timestamp"] == "2026-05-27T00:40:00Z"
