@@ -24,6 +24,7 @@ VALID_UNITS: dict[str, set[str]] = {
     "group_distance": {"mile", "km"},
     "group_direction": {"degree_compass"},
     "group_radiation": {"watt_per_meter_squared"},
+    "group_uv": {"uv_index"},
     "group_percent": {"percent"},
     "group_moisture": {"centibar"},
     "group_volt": {"volt"},
@@ -105,6 +106,7 @@ US_UNITS: dict[str, str] = {
     "group_speed":       "mile_per_hour",
     "group_speed2":      "mile_per_hour2",
     "group_temperature": "degree_F",
+    "group_uv":          "uv_index",
     "group_volt":        "volt",
 }
 
@@ -122,6 +124,7 @@ METRIC_UNITS: dict[str, str] = {
     "group_speed":       "km_per_hour",
     "group_speed2":      "km_per_hour2",
     "group_temperature": "degree_C",
+    "group_uv":          "uv_index",
     "group_volt":        "volt",
 }
 

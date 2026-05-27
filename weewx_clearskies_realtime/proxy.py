@@ -325,8 +325,13 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
                         flattened[key] = float(formatted_str)
                     except (ValueError, TypeError):
                         # formatted is a non-numeric string (compass ordinate,
-                        # "N/A", etc.) — fall back to the raw converted float.
-                        flattened[key] = raw_val
+                        # "N/A", etc.) — fall back to the raw converted float,
+                        # rounded to 1 decimal so direction degrees don't leak
+                        # full-precision floats to callers.
+                        if isinstance(raw_val, float):
+                            flattened[key] = round(raw_val, 1)
+                        else:
+                            flattened[key] = raw_val
             return {**data, "data": flattened}
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")

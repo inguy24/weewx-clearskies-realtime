@@ -112,8 +112,23 @@ class UnitTransformer:
 
             target_unit = self._targets.get(group)
             if target_unit is None:
-                # No target configured for this group — pass raw through.
-                result[obs] = raw_value
+                # No target configured for this group — no unit conversion
+                # needed, but still apply formatting using the source unit so
+                # pass-through groups (radiation, humidity, UV, etc.) don't
+                # leak unrounded floats to callers.
+                source_unit = get_source_unit(obs, us_units)
+                if source_unit is None or raw_value is None:
+                    result[obs] = raw_value
+                    continue
+                result[obs] = {
+                    "value": float(raw_value),  # type: ignore[arg-type]
+                    "label": get_label(source_unit, self._label_overrides),
+                    "formatted": format_value(
+                        float(raw_value),  # type: ignore[arg-type]
+                        source_unit,
+                        self._format_overrides,
+                    ),
+                }
                 continue
 
             source_unit = get_source_unit(obs, us_units)
