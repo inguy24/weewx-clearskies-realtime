@@ -296,18 +296,37 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
             # transform_record returns {value, label, formatted} dicts for
             # numeric observations.  The dashboard expects a flat shape — numeric
             # values in "data" and unit labels already in the "units" envelope —
-            # so extract just the rounded numeric value from each converted entry.
-            # String pass-throughs (e.g. weatherText.value, timestamp) and
-            # unknown fields remain unchanged.
+            # so flatten to a single scalar per observation.
+            #
+            # Rounding strategy: parse the "formatted" string back to float so
+            # the precision matches the operator's StringFormats config (e.g.
+            # "%.1f" for temperature, "%.0f" for wind speed).  Fall back to the
+            # raw "value" float when "formatted" is not a valid number (compass
+            # direction labels, "N/A" for None values, text fields like
+            # weatherText).  String pass-throughs and unknown fields are kept
+            # as-is.
             flattened: dict[str, object] = {}
             for key, val in converted_obs.items():
-                if isinstance(val, dict) and "value" in val:
-                    # Numeric observation or weatherText: extract the value field.
-                    # For weatherText the value is a plain string; for numeric
-                    # observations it is a float or None — both are correct here.
-                    flattened[key] = val["value"]
-                else:
+                if not isinstance(val, dict) or "value" not in val:
+                    # Unknown / passthrough field — no conversion applied.
                     flattened[key] = val
+                    continue
+                raw_val = val["value"]
+                formatted_str = val.get("formatted", "")
+                if raw_val is None:
+                    flattened[key] = None
+                elif isinstance(raw_val, str):
+                    # Text field (e.g. weatherText) — value is already a string.
+                    flattened[key] = raw_val
+                else:
+                    # Numeric field — use the formatted string parsed back to
+                    # float to preserve StringFormats-configured rounding.
+                    try:
+                        flattened[key] = float(formatted_str)
+                    except (ValueError, TypeError):
+                        # formatted is a non-numeric string (compass ordinate,
+                        # "N/A", etc.) — fall back to the raw converted float.
+                        flattened[key] = raw_val
             return {**data, "data": flattened}
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")

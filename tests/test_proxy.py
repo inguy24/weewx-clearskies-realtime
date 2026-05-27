@@ -352,7 +352,8 @@ def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> 
 
     obs = body["data"]
 
-    # outTemp: 32 °F → 0 °C; flat scalar value (not a nested dict).
+    # outTemp: 32 °F → 0 °C; flat scalar rounded to 1 decimal per StringFormats
+    # default for degree_C ("%.1f").  Should be 0.0, not a nested dict.
     assert "outTemp" in obs
     out_temp = obs["outTemp"]
     assert not isinstance(out_temp, dict), (
@@ -361,15 +362,17 @@ def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> 
     )
     assert out_temp == pytest.approx(0.0, abs=1e-9)
 
-    # windSpeed: 10 mph → ~16.09 km/h; flat scalar.
+    # windSpeed: 10 mph → ~16.09 km/h; rounded to 0 decimal per StringFormats
+    # default for km_per_hour ("%.0f") → 16.0.
     wind = obs["windSpeed"]
     assert not isinstance(wind, dict), f"expected flat scalar, got {wind!r}"
-    assert wind == pytest.approx(16.09344, rel=1e-4)
+    assert wind == pytest.approx(16.0, abs=0.5)   # rounded from 16.09 → 16
 
-    # outHumidity: group_percent → percent (no conversion); flat scalar.
+    # outHumidity: group_percent → percent (no conversion); rounded to 0 decimal
+    # per StringFormats default for percent ("%.0f") → 65.0.
     humidity = obs["outHumidity"]
     assert not isinstance(humidity, dict), f"expected flat scalar, got {humidity!r}"
-    assert humidity == pytest.approx(65.0, abs=1e-9)
+    assert humidity == pytest.approx(65.0, abs=0.5)
 
     # weatherText: transform_record always adds this; its value is a plain string.
     weather_text = obs.get("weatherText")
