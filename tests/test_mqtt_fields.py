@@ -312,8 +312,8 @@ def test_convert_mqtt_packet_radiation_suffix_formats() -> None:
     """Radiation with suffix and no target unit: formatted value, not raw float.
 
     Regression: before the fix, the SSE path returned e.g. '104.043' (raw
-    str(raw_value)) instead of '104' (formatted via watt_per_meter_squared
-    %.0f format).
+    str(raw_value)) instead of '104.0' (formatted via watt_per_meter_squared
+    %.1f format).
     """
     from weewx_clearskies_realtime.units.transformer import UnitTransformer
 
@@ -329,7 +329,7 @@ def test_convert_mqtt_packet_radiation_suffix_formats() -> None:
     result = convert_mqtt_packet(packet, transformer)
 
     assert result["radiation"]["value"] == pytest.approx(104.043, rel=1e-6)
-    assert result["radiation"]["formatted"] == "104"
+    assert result["radiation"]["formatted"] == "104.0"
     assert result["radiation"]["label"] == " W/m²"
 
 

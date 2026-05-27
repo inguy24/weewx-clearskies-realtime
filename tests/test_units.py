@@ -335,7 +335,7 @@ def test_transform_record_radiation_passthrough() -> None:
     assert isinstance(rad, dict)
     assert rad["value"] == pytest.approx(500.0)
     assert rad["label"] == " W/m²"
-    assert rad["formatted"] == "500"
+    assert rad["formatted"] == "500.0"
 
 
 def test_transform_field_none_value() -> None:
@@ -371,8 +371,8 @@ def test_transform_field_radiation_passthrough_formats() -> None:
         "radiation", "104.043", "watt_per_meter_squared"
     )
     assert result["value"] == pytest.approx(104.043, rel=1e-6)
-    # watt_per_meter_squared format is "%.0f" → "104", not "104.043"
-    assert result["formatted"] == "104"
+    # watt_per_meter_squared format is "%.1f" → "104.0", not "104.043"
+    assert result["formatted"] == "104.0"
     assert result["label"] == " W/m²"
 
 

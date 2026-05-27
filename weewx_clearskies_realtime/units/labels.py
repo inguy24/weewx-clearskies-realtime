@@ -73,7 +73,7 @@ DEFAULT_FORMATS: dict[str, str] = {
     "knot2":              "%.1f",
     "meter_per_second2":  "%.1f",
     # Pressure
-    "inHg":               "%.3f",
+    "inHg":               "%.2f",
     "mbar":               "%.1f",
     "hPa":                "%.1f",
     "kPa":                "%.2f",
@@ -98,7 +98,7 @@ DEFAULT_FORMATS: dict[str, str] = {
     # Direction
     "degree_compass":     "%03.0f",
     # Radiation
-    "watt_per_meter_squared": "%.0f",
+    "watt_per_meter_squared": "%.1f",
     # Misc
     "percent":            "%.0f",
     "centibar":           "%.0f",
