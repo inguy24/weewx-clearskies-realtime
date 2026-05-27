@@ -13,8 +13,6 @@ Design notes:
 
 from __future__ import annotations
 
-from .. import sky_condition
-from ..conditions_text import build_weather_text
 from .conversion import convert
 from .derived import beaufort, comfort_index
 from .groups import OBS_GROUP, UNIT_SYSTEMS, VALID_UNITS, get_source_unit  # noqa: F401
@@ -168,6 +166,11 @@ class UnitTransformer:
                     pass
 
         # --- Sky condition and weatherText (ADR-044) ---
+        # Lazy imports to avoid circular dependency (conditions_text →
+        # units.conversion → units.__init__ → transformer → conditions_text).
+        from .. import sky_condition as _sky
+        from ..conditions_text import build_weather_text as _build_wt
+
         # radiation group is always watt_per_meter_squared across all unit
         # systems, so raw values == display values. Safe to feed into the
         # sky_condition buffer from either path.
@@ -175,11 +178,11 @@ class UnitTransformer:
         raw_max_solar = data.get("maxSolarRad")
         if raw_radiation is not None and raw_max_solar is not None:
             try:
-                sky_condition.update(float(raw_radiation), float(raw_max_solar))
+                _sky.update(float(raw_radiation), float(raw_max_solar))
             except (ValueError, TypeError):
                 pass
 
-        sky = sky_condition.classify()
+        sky = _sky.classify()
 
         # Extract display-unit values for weatherText components.
         wind_val = _extract_value(result.get("windSpeed"))
@@ -190,7 +193,7 @@ class UnitTransformer:
         target_rainrate = self._targets.get("group_rainrate")
 
         result["weatherText"] = {
-            "value": build_weather_text(
+            "value": _build_wt(
                 sky=sky,
                 rain_rate=rain_rate_val,
                 rain_rate_unit=target_rainrate if target_rainrate else "inch_per_hour",
@@ -290,17 +293,20 @@ class UnitTransformer:
                     pass
 
         # --- Sky condition and weatherText (ADR-044) ---
+        from .. import sky_condition as _sky
+        from ..conditions_text import build_weather_text as _build_wt
+
         # radiation is always watt_per_meter_squared; display value == raw
         # value. Update the rolling buffer from the already-converted record.
         rad_val = _extract_value(record.get("radiation"))
         max_val = _extract_value(record.get("maxSolarRad"))
         if rad_val is not None and max_val is not None:
             try:
-                sky_condition.update(rad_val, max_val)
+                _sky.update(rad_val, max_val)
             except (ValueError, TypeError):
                 pass
 
-        sky = sky_condition.classify()
+        sky = _sky.classify()
 
         wind_val = _extract_value(record.get("windSpeed"))
         target_speed_unit = self._targets.get("group_speed")
@@ -310,7 +316,7 @@ class UnitTransformer:
         target_rainrate_unit = self._targets.get("group_rainrate")
 
         record["weatherText"] = {
-            "value": build_weather_text(
+            "value": _build_wt(
                 sky=sky,
                 rain_rate=rain_rate_val,
                 rain_rate_unit=target_rainrate_unit if target_rainrate_unit else "inch_per_hour",
