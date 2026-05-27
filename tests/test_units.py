@@ -351,3 +351,58 @@ def test_transform_field_non_numeric_string() -> None:
     transformer = UnitTransformer(target_units={"group_temperature": "degree_C"})
     result = transformer.transform_field("outTemp", "N/A", "degree_F")
     assert result["value"] is None
+
+
+# ---------------------------------------------------------------------------
+# transform_field() — pass-through groups (no target unit configured)
+# ---------------------------------------------------------------------------
+
+
+def test_transform_field_radiation_passthrough_formats() -> None:
+    """Radiation field with no target unit configured gets formatted (not raw float).
+
+    Regression: before the fix, transform_field() returned str(raw_value) for
+    groups with no target unit, leaking unrounded floats (e.g. '104.043') to
+    the SSE stream while the REST path returned formatted values.
+    """
+    # No radiation target configured — group_radiation has no entry.
+    transformer = UnitTransformer(target_units={"group_temperature": "degree_C"})
+    result = transformer.transform_field(
+        "radiation", "104.043", "watt_per_meter_squared"
+    )
+    assert result["value"] == pytest.approx(104.043, rel=1e-6)
+    # watt_per_meter_squared format is "%.0f" → "104", not "104.043"
+    assert result["formatted"] == "104"
+    assert result["label"] == " W/m²"
+
+
+def test_transform_field_humidity_passthrough_formats() -> None:
+    """Humidity (group_percent) with no target unit: formats as integer percent."""
+    transformer = UnitTransformer(target_units={"group_temperature": "degree_C"})
+    result = transformer.transform_field("outHumidity", "65.0", "percent")
+    assert result["value"] == pytest.approx(65.0, rel=1e-6)
+    # percent format is "%.0f" → "65"
+    assert result["formatted"] == "65"
+    assert result["label"] == "%"
+
+
+def test_transform_field_uv_passthrough_formats() -> None:
+    """UV index (group_uv) with no target unit: formats to one decimal place."""
+    transformer = UnitTransformer(target_units={"group_temperature": "degree_C"})
+    result = transformer.transform_field("UV", "3.7", "uv_index")
+    assert result["value"] == pytest.approx(3.7, rel=1e-6)
+    # uv_index format is "%.1f" → "3.7"
+    assert result["formatted"] == "3.7"
+
+
+def test_transform_field_passthrough_respects_format_override() -> None:
+    """Pass-through path honours operator format_overrides."""
+    overrides = {"watt_per_meter_squared": "%.2f"}
+    transformer = UnitTransformer(
+        target_units={"group_temperature": "degree_C"},
+        format_overrides=overrides,
+    )
+    result = transformer.transform_field(
+        "radiation", "104.043", "watt_per_meter_squared"
+    )
+    assert result["formatted"] == "104.04"

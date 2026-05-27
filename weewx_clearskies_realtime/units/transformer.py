@@ -259,7 +259,16 @@ class UnitTransformer:
             return {"value": numeric, "label": "", "formatted": str(raw_value)}
 
         if not target_unit:
-            return {"value": numeric, "label": "", "formatted": str(raw_value)}
+            # No target unit configured for this group (pass-through groups
+            # such as radiation, humidity, UV).  Source == display unit, so
+            # apply formatting with the source unit rather than leaking an
+            # unrounded float string to the SSE stream.  Mirrors the
+            # transform_record() pass-through branch exactly.
+            return {
+                "value": numeric,
+                "label": get_label(source_unit, self._label_overrides),
+                "formatted": format_value(numeric, source_unit, self._format_overrides),
+            }
 
         # Wind direction special case.
         if group == "group_direction":

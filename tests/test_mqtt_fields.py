@@ -301,3 +301,68 @@ def test_convert_mqtt_packet_metric_mode() -> None:
     # outTemp source unit (usUnits=16) → degree_C; target degree_C → identity
     assert result["outTemp"]["value"] == pytest.approx(20.0)
     assert "C" in result["outTemp"]["label"]
+
+
+# ---------------------------------------------------------------------------
+# convert_mqtt_packet — pass-through groups format correctly (SSE path)
+# ---------------------------------------------------------------------------
+
+
+def test_convert_mqtt_packet_radiation_suffix_formats() -> None:
+    """Radiation with suffix and no target unit: formatted value, not raw float.
+
+    Regression: before the fix, the SSE path returned e.g. '104.043' (raw
+    str(raw_value)) instead of '104' (formatted via watt_per_meter_squared
+    %.0f format).
+    """
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+
+    # Deliberately NO group_radiation in target_units to exercise the
+    # pass-through formatting branch.
+    transformer = UnitTransformer(
+        target_units={"group_temperature": "degree_C"}
+    )
+    packet = {
+        "radiation_Wpm2": "104.043",
+        "usUnits": "1",
+    }
+    result = convert_mqtt_packet(packet, transformer)
+
+    assert result["radiation"]["value"] == pytest.approx(104.043, rel=1e-6)
+    assert result["radiation"]["formatted"] == "104"
+    assert result["radiation"]["label"] == " W/m²"
+
+
+def test_convert_mqtt_packet_humidity_no_suffix_formats() -> None:
+    """Humidity (suffix-less) with no group_percent target: formats as integer."""
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+
+    transformer = UnitTransformer(
+        target_units={"group_temperature": "degree_C"}
+    )
+    packet = {
+        "outHumidity": "65.0",
+        "usUnits": "1",
+    }
+    result = convert_mqtt_packet(packet, transformer)
+
+    assert result["outHumidity"]["value"] == pytest.approx(65.0, rel=1e-6)
+    assert result["outHumidity"]["formatted"] == "65"
+    assert result["outHumidity"]["label"] == "%"
+
+
+def test_convert_mqtt_packet_uv_no_suffix_formats() -> None:
+    """UV index (suffix-less) with no group_uv target: formats to one decimal."""
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+
+    transformer = UnitTransformer(
+        target_units={"group_temperature": "degree_C"}
+    )
+    packet = {
+        "UV": "3.7",
+        "usUnits": "1",
+    }
+    result = convert_mqtt_packet(packet, transformer)
+
+    assert result["UV"]["value"] == pytest.approx(3.7, rel=1e-6)
+    assert result["UV"]["formatted"] == "3.7"
