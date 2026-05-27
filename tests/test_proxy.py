@@ -383,7 +383,9 @@ def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> 
     # timestamp is a string, not a known observation → passed through raw.
     assert obs["timestamp"] == "2026-05-27T00:40:00Z"
 
-    # extras sub-dict is not a known observation → passed through raw.
+    # extras sub-dict: string values are not known observations → passed through
+    # raw (no OBS_GROUP entry for "foo", and the value "bar" is a string so it
+    # would not be convertible even if "foo" were registered).
     assert obs["extras"] == {"foo": "bar"}
 
 
@@ -409,3 +411,97 @@ def test_proxy_observation_envelope_no_transformer(app_no_transform: FastAPI) ->
     body = resp.json()
     # No transformer — entire response passed through raw.
     assert body == upstream_data
+
+
+# ---------------------------------------------------------------------------
+# Tests 15–16: extras sub-dict rounding (bug fix)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_proxy_extras_known_field_rounded(app_with_transform: FastAPI) -> None:
+    """15. extras sub-dict: field in OBS_GROUP is converted and rounded.
+
+    inDewpoint is in OBS_GROUP (group_temperature).  A raw float from the
+    upstream (58.321456789 °F) must come back as a rounded scalar in the
+    display unit (°C, 1-decimal precision per StringFormats default for
+    degree_C) rather than passing through as a raw float.
+    """
+    upstream_data = {
+        "data": {
+            "outTemp": 72.0,   # 72 °F → 0 °C after conversion (for context)
+            "extras": {
+                "inDewpoint": 58.321456789,  # °F → °C, should be rounded
+                "foo": "bar",               # not in OBS_GROUP → raw passthrough
+            },
+        },
+        "units": {
+            "outTemp": "°F",
+            "rain": "in",
+        },
+        "source": "weewx",
+        "generatedAt": "2026-05-27T00:44:44Z",
+    }
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json=upstream_data)
+    )
+    with TestClient(app_with_transform) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    obs = resp.json()["data"]
+
+    extras = obs["extras"]
+    assert isinstance(extras, dict), f"expected extras dict, got {extras!r}"
+
+    # inDewpoint: 58.321456789 °F → ~14.623 °C; rounded to 1 decimal → 14.6
+    in_dew = extras["inDewpoint"]
+    assert not isinstance(in_dew, dict), (
+        f"expected flat scalar, got nested dict {in_dew!r} — "
+        "extras field was not flattened by the proxy"
+    )
+    # Must be rounded — not the raw 58.321456789 leaked through.
+    assert in_dew != pytest.approx(58.321456789, rel=1e-6), (
+        "inDewpoint was passed through unconverted (still Fahrenheit raw float)"
+    )
+    # Should be ~14.6°C (1-decimal rounding per degree_C StringFormats default).
+    expected_c = (58.321456789 - 32.0) / 1.8
+    assert in_dew == pytest.approx(round(expected_c, 1), abs=0.05)
+
+    # foo: unknown field → passed through raw string.
+    assert extras["foo"] == "bar"
+
+
+@respx.mock
+def test_proxy_extras_unknown_field_passthrough(app_with_transform: FastAPI) -> None:
+    """16. extras sub-dict: field NOT in OBS_GROUP passes through unchanged.
+
+    luminosity is not a standard weewx observation and has no entry in
+    OBS_GROUP, so it should pass through as-is (raw float, no conversion).
+    """
+    upstream_data = {
+        "data": {
+            "outTemp": 72.0,
+            "extras": {
+                "luminosity": 12345.678,  # unknown obs → raw passthrough
+            },
+        },
+        "units": {
+            "outTemp": "°F",
+            "rain": "in",
+        },
+        "source": "weewx",
+        "generatedAt": "2026-05-27T00:44:44Z",
+    }
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json=upstream_data)
+    )
+    with TestClient(app_with_transform) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    obs = resp.json()["data"]
+
+    extras = obs["extras"]
+    # luminosity has no OBS_GROUP entry → unchanged raw float.
+    assert extras["luminosity"] == pytest.approx(12345.678, rel=1e-6)

@@ -257,6 +257,43 @@ def _infer_us_units(units_block: dict[str, object]) -> int:
     return us_units
 
 
+def _flatten_converted_value(val: object) -> object:
+    """Flatten one ConvertedValue dict to a scalar, or pass non-converted values through.
+
+    A ConvertedValue dict has the shape ``{"value": float|None, "label": str,
+    "formatted": str}`` — the output of ``UnitTransformer.transform_record()``
+    for known observations.  This function extracts the appropriately rounded
+    scalar the dashboard expects:
+
+    - ``None`` value → ``None``
+    - String value (e.g. weatherText) → the string as-is
+    - Numeric value → ``float(formatted)`` (preserves operator StringFormats
+      rounding), falling back to ``round(value, 1)`` when ``formatted`` is
+      non-numeric (compass ordinate, ``"N/A"``, etc.)
+
+    Values that are NOT ConvertedValue dicts (plain strings, raw numbers,
+    arbitrary nested dicts) are returned unchanged — they are unknown /
+    passthrough fields that skipped conversion.
+    """
+    if not isinstance(val, dict) or "value" not in val:
+        return val
+    raw_val = val["value"]
+    formatted_str = val.get("formatted", "")
+    if raw_val is None:
+        return None
+    if isinstance(raw_val, str):
+        return raw_val
+    # Numeric: parse formatted string back to float to honour StringFormats.
+    try:
+        return float(formatted_str)
+    except (ValueError, TypeError):
+        # Non-numeric formatted string (compass ordinate, "N/A") — fall back
+        # to the raw converted float rounded to 1 decimal.
+        if isinstance(raw_val, float):
+            return round(raw_val, 1)
+        return raw_val
+
+
 def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, object] | list[object]:
     """Apply unit conversion to API response data.
 
@@ -307,31 +344,21 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
             # as-is.
             flattened: dict[str, object] = {}
             for key, val in converted_obs.items():
+                # extras sub-dict: each entry may itself be a ConvertedValue
+                # dict (for known observations transformed by transform_record)
+                # or a raw passthrough value (unknown fields).
+                if key == "extras" and isinstance(val, dict):
+                    flattened_extras: dict[str, object] = {}
+                    for sub_key, sub_val in val.items():
+                        flattened_extras[sub_key] = _flatten_converted_value(sub_val)
+                    flattened[key] = flattened_extras
+                    continue
+
                 if not isinstance(val, dict) or "value" not in val:
                     # Unknown / passthrough field — no conversion applied.
                     flattened[key] = val
                     continue
-                raw_val = val["value"]
-                formatted_str = val.get("formatted", "")
-                if raw_val is None:
-                    flattened[key] = None
-                elif isinstance(raw_val, str):
-                    # Text field (e.g. weatherText) — value is already a string.
-                    flattened[key] = raw_val
-                else:
-                    # Numeric field — use the formatted string parsed back to
-                    # float to preserve StringFormats-configured rounding.
-                    try:
-                        flattened[key] = float(formatted_str)
-                    except (ValueError, TypeError):
-                        # formatted is a non-numeric string (compass ordinate,
-                        # "N/A", etc.) — fall back to the raw converted float,
-                        # rounded to 1 decimal so direction degrees don't leak
-                        # full-precision floats to callers.
-                        if isinstance(raw_val, float):
-                            flattened[key] = round(raw_val, 1)
-                        else:
-                            flattened[key] = raw_val
+                flattened[key] = _flatten_converted_value(val)
             return {**data, "data": flattened}
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")

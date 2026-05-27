@@ -104,59 +104,23 @@ class UnitTransformer:
             if obs in _METADATA_FIELDS:
                 continue
 
+            # extras sub-dict: recursively transform any entries that are
+            # known observations; unknown / non-numeric entries pass through raw.
+            if obs == "extras" and isinstance(raw_value, dict):
+                extras_out: dict[str, object] = {}
+                for sub_key, sub_val in raw_value.items():
+                    transformed = self._transform_single_obs(sub_key, sub_val, us_units)
+                    extras_out[sub_key] = transformed
+                result[obs] = extras_out
+                continue
+
             group = OBS_GROUP.get(obs)
             if group is None:
                 # Unknown observation — pass raw value through.
                 result[obs] = raw_value
                 continue
 
-            target_unit = self._targets.get(group)
-            if target_unit is None:
-                # No target configured for this group — no unit conversion
-                # needed, but still apply formatting using the source unit so
-                # pass-through groups (radiation, humidity, UV, etc.) don't
-                # leak unrounded floats to callers.
-                source_unit = get_source_unit(obs, us_units)
-                if source_unit is None or raw_value is None:
-                    result[obs] = raw_value
-                    continue
-                result[obs] = {
-                    "value": float(raw_value),  # type: ignore[arg-type]
-                    "label": get_label(source_unit, self._label_overrides),
-                    "formatted": format_value(
-                        float(raw_value),  # type: ignore[arg-type]
-                        source_unit,
-                        self._format_overrides,
-                    ),
-                }
-                continue
-
-            source_unit = get_source_unit(obs, us_units)
-
-            if source_unit is None or raw_value is None:
-                result[obs] = {
-                    "value": None,
-                    "label": get_label(target_unit, self._label_overrides),
-                    "formatted": "N/A",
-                }
-                continue
-
-            # Wind direction: degrees are degrees; format as compass label.
-            if group == "group_direction":
-                assert isinstance(raw_value, (int, float))
-                deg = float(raw_value)
-                compass = self._direction_label(deg)
-                result[obs] = {"value": deg, "label": compass, "formatted": compass}
-                continue
-
-            assert isinstance(raw_value, (int, float))
-            converted = convert(float(raw_value), source_unit, target_unit)
-            assert converted is not None
-            result[obs] = {
-                "value": converted,
-                "label": get_label(target_unit, self._label_overrides),
-                "formatted": format_value(converted, target_unit, self._format_overrides),
-            }
+            result[obs] = self._transform_single_obs(obs, raw_value, us_units)
 
         # --- Derived fields ---
         # Computed from raw values + us_units so we work in the original unit
@@ -356,6 +320,71 @@ class UnitTransformer:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _transform_single_obs(
+        self,
+        obs: str,
+        raw_value: object,
+        us_units: int,
+    ) -> object:
+        """Transform one observation name + raw value to a ConvertedValue dict.
+
+        Returns a ``{"value": float|None, "label": str, "formatted": str}``
+        dict for observations that are in OBS_GROUP.  Returns *raw_value*
+        unchanged for observations not in OBS_GROUP (string passthrough, unknown
+        fields, etc.).
+
+        This is the per-field kernel used by both ``transform_record()`` (for
+        top-level fields) and the ``extras`` sub-dict recursion path, so the
+        conversion/formatting logic lives in exactly one place.
+        """
+        group = OBS_GROUP.get(obs)
+        if group is None:
+            # Not a known weewx observation — pass through unchanged.
+            return raw_value
+
+        target_unit = self._targets.get(group)
+        if target_unit is None:
+            # No target configured for this group (pass-through groups such as
+            # radiation, humidity, UV).  Apply formatting with the source unit
+            # so callers don't receive unrounded floats.
+            source_unit = get_source_unit(obs, us_units)
+            if source_unit is None or raw_value is None:
+                return raw_value
+            return {
+                "value": float(raw_value),  # type: ignore[arg-type]
+                "label": get_label(source_unit, self._label_overrides),
+                "formatted": format_value(
+                    float(raw_value),  # type: ignore[arg-type]
+                    source_unit,
+                    self._format_overrides,
+                ),
+            }
+
+        source_unit = get_source_unit(obs, us_units)
+
+        if source_unit is None or raw_value is None:
+            return {
+                "value": None,
+                "label": get_label(target_unit, self._label_overrides),
+                "formatted": "N/A",
+            }
+
+        # Wind direction: degrees are degrees; format as compass label.
+        if group == "group_direction":
+            assert isinstance(raw_value, (int, float))
+            deg = float(raw_value)
+            compass = self._direction_label(deg)
+            return {"value": deg, "label": compass, "formatted": compass}
+
+        assert isinstance(raw_value, (int, float))
+        converted = convert(float(raw_value), source_unit, target_unit)
+        assert converted is not None
+        return {
+            "value": converted,
+            "label": get_label(target_unit, self._label_overrides),
+            "formatted": format_value(converted, target_unit, self._format_overrides),
+        }
 
     def _direction_label(self, degrees: float) -> str:
         """Convert compass degrees to the appropriate ordinate label."""

@@ -237,6 +237,109 @@ def test_transform_record_unknown_obs() -> None:
 
 
 # ---------------------------------------------------------------------------
+# extras sub-dict recursion (bug fix — fields inside extras were not converted)
+# ---------------------------------------------------------------------------
+
+
+def test_transform_record_extras_known_field_converted() -> None:
+    """19a. extras sub-dict: field in OBS_GROUP is converted and formatted.
+
+    inDewpoint is in OBS_GROUP (group_temperature).  A raw float value inside
+    the extras dict must go through the same conversion/formatting path as if
+    it were a top-level key — not pass through as an unrounded float.
+    """
+    transformer = UnitTransformer(target_units=_METRIC_TARGETS)
+    # inDewpoint is group_temperature; US system source unit is degree_F.
+    record = {
+        "extras": {
+            "inDewpoint": 58.0,  # 58 °F → 14.444 °C
+        }
+    }
+    result = transformer.transform_record(record, us_units=1)
+
+    assert "extras" in result
+    extras = result["extras"]
+    assert isinstance(extras, dict)
+
+    in_dew = extras["inDewpoint"]
+    assert isinstance(in_dew, dict), (
+        f"expected ConvertedValue dict, got {in_dew!r} — "
+        "inDewpoint inside extras was not transformed"
+    )
+    expected_c = (58.0 - 32.0) / 1.8
+    assert in_dew["value"] == pytest.approx(expected_c, rel=1e-6)
+    assert in_dew["label"] == "°C"
+    # formatted string honours the default degree_C format ("%.1f")
+    assert in_dew["formatted"] == "14.4"
+
+
+def test_transform_record_extras_unknown_field_passthrough() -> None:
+    """19b. extras sub-dict: field NOT in OBS_GROUP passes through unchanged."""
+    transformer = UnitTransformer(target_units=_METRIC_TARGETS)
+    record = {
+        "extras": {
+            "luminosity": 12345.678,
+            "foo": "bar",
+        }
+    }
+    result = transformer.transform_record(record, us_units=1)
+
+    extras = result["extras"]
+    assert isinstance(extras, dict)
+    # Neither "luminosity" nor "foo" are in OBS_GROUP — raw passthrough.
+    assert extras["luminosity"] == pytest.approx(12345.678, rel=1e-6)
+    assert extras["foo"] == "bar"
+
+
+def test_transform_record_extras_mixed() -> None:
+    """19c. extras sub-dict with both known and unknown fields handled correctly."""
+    transformer = UnitTransformer(target_units=_METRIC_TARGETS)
+    record = {
+        "extras": {
+            "inDewpoint": 32.0,   # known — 32 °F → 0 °C
+            "luminosity": 500.0,  # unknown — raw passthrough
+        }
+    }
+    result = transformer.transform_record(record, us_units=1)
+
+    extras = result["extras"]
+    assert isinstance(extras, dict)
+
+    # inDewpoint converted.
+    in_dew = extras["inDewpoint"]
+    assert isinstance(in_dew, dict)
+    assert in_dew["value"] == pytest.approx(0.0, abs=1e-9)
+
+    # luminosity unchanged.
+    assert extras["luminosity"] == pytest.approx(500.0, rel=1e-6)
+
+
+def test_transform_record_extras_none_value() -> None:
+    """19d. extras sub-dict: None value for a known field produces N/A result."""
+    transformer = UnitTransformer(target_units=_METRIC_TARGETS)
+    record = {"extras": {"inDewpoint": None}}
+    result = transformer.transform_record(record, us_units=1)
+
+    in_dew = result["extras"]["inDewpoint"]  # type: ignore[index]
+    assert isinstance(in_dew, dict)
+    assert in_dew["value"] is None
+    assert in_dew["formatted"] == "N/A"
+
+
+def test_transform_record_extras_not_a_dict_passthrough() -> None:
+    """19e. If extras value is not a dict (e.g. a string), it passes through raw.
+
+    The extras recursion only activates when the value of the "extras" key IS
+    a dict.  Other shapes pass through unchanged so the code is future-safe.
+    """
+    transformer = UnitTransformer(target_units=_METRIC_TARGETS)
+    record = {"extras": "unexpected-string"}
+    result = transformer.transform_record(record, us_units=1)
+    # extras is not a dict → treated as unknown passthrough
+    assert result["extras"] == "unexpected-string"
+
+
+# ---------------------------------------------------------------------------
 # Groups helpers
 # ---------------------------------------------------------------------------
 
