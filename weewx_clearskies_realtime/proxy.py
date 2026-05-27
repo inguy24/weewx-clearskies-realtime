@@ -1,7 +1,20 @@
 """BFF proxy — forwards /api/v1/* requests to the upstream API.
 
-Applies UnitTransformer to JSON responses that contain weather data
-(identified by the presence of a usUnits field in the record).
+Applies UnitTransformer to JSON responses that contain weather data.
+Two response shapes are handled:
+
+  1. Flat record with ``usUnits`` key — weewx archive records proxied directly.
+     ``_apply_conversion`` passes the record to
+     ``UnitTransformer.transform_record()``.
+
+  2. Observation envelope ``{data: dict, units: label_dict, …}`` — the shape
+     returned by the upstream clearskies-api for ``/api/v1/current``.  The
+     ``data`` sub-dict holds raw observation values in the station's native
+     unit system.  The ``units`` sub-dict maps field names to human-readable
+     label strings (e.g. ``{"outTemp": "°F", "windSpeed": "mph"}``).
+     ``_infer_us_units`` converts that label block to a weewx ``usUnits``
+     integer (1 = US, 16 = Metric, 17 = MetricWX) so
+     ``UnitTransformer.transform_record()`` can apply the right conversion.
 
 ADR-041: The realtime service is the dashboard's single backend gateway.
 """
@@ -198,15 +211,67 @@ def upstream_health_probe() -> "ProbeResult":  # type: ignore[name-defined]  # n
 
 
 # ---------------------------------------------------------------------------
-# Conversion helper
+# Conversion helpers
 # ---------------------------------------------------------------------------
+
+# Map from the label strings the upstream API returns in its ``units`` block
+# to weewx unit-system codes.  Temperature is used as the primary discriminator
+# (unambiguous across all three systems); rain disambiguates Metric from
+# MetricWX when the temperature label alone would match both.
+_TEMP_LABEL_TO_US_UNITS: dict[str, int] = {
+    "°F": 1,   # US
+    "°C": 16,  # Metric or MetricWX — disambiguated by rain label below
+}
+_RAIN_LABEL_TO_US_UNITS: dict[str, int] = {
+    "mm": 17,  # MetricWX
+    "cm": 16,  # Metric
+}
+
+
+def _infer_us_units(units_block: dict[str, object]) -> int:
+    """Infer the weewx usUnits code from the upstream API ``units`` label block.
+
+    The upstream clearskies-api does not embed a ``usUnits`` integer in its
+    ``/current`` response; it only sends a ``units`` dict of field → label
+    strings (e.g. ``{"outTemp": "°F", "windSpeed": "mph"}``).  This function
+    reverse-maps those labels back to a unit-system code so that
+    ``UnitTransformer.transform_record()`` can look up source units.
+
+    Args:
+        units_block: The ``units`` dict from the upstream ``/current`` response.
+
+    Returns:
+        1 (US), 16 (Metric), or 17 (MetricWX).  Defaults to 1 (US) when the
+        labels are absent or do not match any known system — this is the weewx
+        default and safe for US-configured stations.
+    """
+    temp_label = str(units_block.get("outTemp", ""))
+    us_units = _TEMP_LABEL_TO_US_UNITS.get(temp_label, 1)
+
+    # Metric (16) and MetricWX (17) both use °C for temperature.
+    # Disambiguate via the rain label: MetricWX uses mm, Metric uses cm.
+    if us_units == 16:
+        rain_label = str(units_block.get("rain", ""))
+        us_units = _RAIN_LABEL_TO_US_UNITS.get(rain_label, 16)
+
+    return us_units
 
 
 def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, object] | list[object]:
     """Apply unit conversion to API response data.
 
-    Handles both single records and lists of records.
-    Only converts records where usUnits is present (identifies weather data).
+    Handles three shapes:
+
+    1. A list — each element is recursively converted if it is a dict.
+    2. An observation envelope ``{data: dict, units: label_dict, …}`` — the
+       shape returned by ``/current``.  The ``data`` sub-dict is a flat
+       observation record; ``units`` is a label block used to infer the source
+       unit system.  The transformer is applied to ``data`` directly and the
+       result replaces it in the returned envelope.
+    3. A nested-list envelope ``{records|data|results: [...], …}`` — the shape
+       returned by ``/archive``.  Each record in the list is converted.
+    4. A flat record with ``usUnits`` — weewx direct-read or MQTT records
+       proxied with their unit-system code intact.
     """
     if isinstance(data, list):
         return [_apply_conversion(item) if isinstance(item, dict) else item for item in data]
@@ -214,8 +279,26 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
     if not isinstance(data, dict):
         return data
 
-    # Pattern: {"records": [...], ...} or {"data": [...]} or {"results": [...]}
-    # Convert each nested record but don't modify the outer envelope.
+    # --- Shape 2: observation envelope {data: dict, units: label_dict, …} ---
+    # The upstream /current response embeds a flat observation dict under "data"
+    # and a label block under "units".  Detect this by checking that "data" is a
+    # dict (not a list) AND "units" is also a dict.
+    obs_payload = data.get("data")
+    units_block = data.get("units")
+    if (
+        isinstance(obs_payload, dict)
+        and isinstance(units_block, dict)
+        and _transformer is not None
+    ):
+        us_units = _infer_us_units(units_block)
+        try:
+            converted_obs = _transformer.transform_record(obs_payload, us_units)
+            return {**data, "data": converted_obs}
+        except Exception:  # noqa: BLE001
+            logger.debug("Observation envelope conversion failed; passing through raw")
+
+    # --- Shape 3: nested-list envelope {records|data|results: [...], …} ---
+    # Convert each record in the list but don't modify the outer envelope.
     for key in ("records", "data", "results"):
         if key in data and isinstance(data[key], list):
             converted_list = [
@@ -224,11 +307,11 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
             ]
             return {**data, key: converted_list}
 
-    # Flat record with usUnits — convert in place.
-    us_units = data.get("usUnits")
-    if us_units is not None and _transformer is not None:
+    # --- Shape 4: flat record with usUnits (direct-read / MQTT / archive) ---
+    us_units_raw = data.get("usUnits")
+    if us_units_raw is not None and _transformer is not None:
         try:
-            return _transformer.transform_record(data, int(us_units))  # type: ignore[arg-type]
+            return _transformer.transform_record(data, int(us_units_raw))  # type: ignore[arg-type]
         except (ValueError, TypeError):
             pass
 

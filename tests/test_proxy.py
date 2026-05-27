@@ -4,6 +4,7 @@ Tests use respx to mock upstream httpx calls and Starlette TestClient
 to exercise the FastAPI route.
 
 Test numbering follows the brief spec (1–8) for auditor cross-reference.
+Tests 9–14 cover the observation-envelope shape returned by /current.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
 
 import weewx_clearskies_realtime.proxy as proxy_mod
-from weewx_clearskies_realtime.proxy import configure, router
+from weewx_clearskies_realtime.proxy import _infer_us_units, configure, router
 from weewx_clearskies_realtime.units.transformer import UnitTransformer
 
 
@@ -269,3 +270,128 @@ def test_proxy_forwards_query_params(app_no_transform: FastAPI) -> None:
     called_url = str(route.calls[0].request.url)
     assert "from=2024-01-01" in called_url
     assert "limit=100" in called_url
+
+
+# ---------------------------------------------------------------------------
+# Tests 9–12: _infer_us_units unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_infer_us_units_us_system() -> None:
+    """9. °F temperature label → US unit system (code 1)."""
+    units_block = {"outTemp": "°F", "windSpeed": "mph", "rain": "in"}
+    assert _infer_us_units(units_block) == 1
+
+
+def test_infer_us_units_metric_system() -> None:
+    """10. °C + cm rain → Metric unit system (code 16)."""
+    units_block = {"outTemp": "°C", "windSpeed": "km/h", "rain": "cm"}
+    assert _infer_us_units(units_block) == 16
+
+
+def test_infer_us_units_metricwx_system() -> None:
+    """11. °C + mm rain → MetricWX unit system (code 17)."""
+    units_block = {"outTemp": "°C", "windSpeed": "m/s", "rain": "mm"}
+    assert _infer_us_units(units_block) == 17
+
+
+def test_infer_us_units_unknown_defaults_to_us() -> None:
+    """12. Empty or unrecognised label block defaults to US (code 1)."""
+    assert _infer_us_units({}) == 1
+    assert _infer_us_units({"outTemp": "K"}) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests 13–14: observation-envelope shape ({data: dict, units: label_dict})
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> None:
+    """13. /current US envelope: numeric values are formatted, envelope preserved."""
+    # Upstream returns the clearskies-api /current shape: flat observation dict
+    # under "data", display labels under "units".  Values are in US units
+    # (°F, mph, inHg).  The transformer is configured to convert to Metric.
+    upstream_data = {
+        "data": {
+            "timestamp": "2026-05-27T00:40:00Z",
+            "outTemp": 32.0,   # °F → 0°C after conversion
+            "windSpeed": 10.0, # mph → 16.09 km/h
+            "outHumidity": 65.0,
+            "weatherText": "Clear",
+            "extras": {"foo": "bar"},
+        },
+        "units": {
+            "outTemp": "°F",
+            "windSpeed": "mph",
+            "outHumidity": "%",
+            "rain": "in",
+        },
+        "source": "weewx",
+        "generatedAt": "2026-05-27T00:44:44Z",
+    }
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json=upstream_data)
+    )
+    with TestClient(app_with_transform) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Envelope-level metadata preserved unchanged.
+    assert body["source"] == "weewx"
+    assert body["generatedAt"] == "2026-05-27T00:44:44Z"
+
+    obs = body["data"]
+
+    # outTemp: 32 °F → 0 °C; transformer targets degree_C.
+    assert "outTemp" in obs
+    out_temp = obs["outTemp"]
+    assert isinstance(out_temp, dict), f"expected ConvertedValue dict, got {out_temp!r}"
+    assert out_temp["value"] == pytest.approx(0.0, abs=1e-9)
+    assert out_temp["label"] == "°C"
+    assert out_temp["formatted"] == "0.0"
+
+    # windSpeed: 10 mph → ~16.09 km/h; formatted as integer (%.0f).
+    wind = obs["windSpeed"]
+    assert isinstance(wind, dict)
+    assert wind["value"] == pytest.approx(16.09344, rel=1e-4)
+    assert wind["label"] == " km/h"
+    assert wind["formatted"] == "16"
+
+    # outHumidity: group_percent → percent (no conversion); formatted as integer.
+    humidity = obs["outHumidity"]
+    assert isinstance(humidity, dict)
+    assert humidity["value"] == pytest.approx(65.0, abs=1e-9)
+    assert humidity["formatted"] == "65"
+
+    # timestamp is a string, not a known observation → passed through raw.
+    assert obs["timestamp"] == "2026-05-27T00:40:00Z"
+
+    # extras sub-dict is not a known observation → passed through raw.
+    assert obs["extras"] == {"foo": "bar"}
+
+
+@respx.mock
+def test_proxy_observation_envelope_no_transformer(app_no_transform: FastAPI) -> None:
+    """14. /current envelope with no transformer → passes through unchanged."""
+    upstream_data = {
+        "data": {
+            "timestamp": "2026-05-27T00:40:00Z",
+            "outTemp": 72.5,
+        },
+        "units": {"outTemp": "°F", "rain": "in"},
+        "source": "weewx",
+        "generatedAt": "2026-05-27T00:44:44Z",
+    }
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json=upstream_data)
+    )
+    with TestClient(app_no_transform) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # No transformer — entire response passed through raw.
+    assert body == upstream_data
