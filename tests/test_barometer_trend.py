@@ -20,6 +20,7 @@ import pytest
 from weewx_clearskies_realtime.enrichment.barometer_trend import (
     TREND_TIME_DELTA,
     TREND_TIME_GRACE,
+    _epoch_to_iso,
     enrich_barometer_trend,
 )
 
@@ -38,20 +39,28 @@ _TS_HISTORICAL_EXACT: int = _TS_CURRENT - TREND_TIME_DELTA  # exactly 3 h ago
 
 
 def _current_envelope(barometer: float | None = 30.10, date_time: int = _TS_CURRENT) -> dict[str, Any]:
-    """Minimal /current response envelope."""
+    """Minimal /current response envelope.
+
+    The observation carries its time as ``timestamp`` (UTC ISO-8601), matching
+    the real API contract — there is no epoch ``dateTime`` field on the wire.
+    """
     return {
         "data": {
             "barometer": barometer,
-            "dateTime": date_time,
+            "timestamp": _epoch_to_iso(date_time),
         },
     }
 
 
 def _archive_response(barometer: float = 30.05, date_time: int = _TS_HISTORICAL_EXACT) -> dict[str, Any]:
-    """Minimal /archive response envelope with a single record."""
+    """Minimal /archive response envelope with a single record.
+
+    Matches the real API contract: records live under the ``data`` key and each
+    record's time is an ISO-8601 ``timestamp`` (not an epoch ``dateTime``).
+    """
     return {
-        "records": [
-            {"barometer": barometer, "dateTime": date_time},
+        "data": [
+            {"barometer": barometer, "timestamp": _epoch_to_iso(date_time)},
         ],
     }
 
@@ -118,7 +127,7 @@ async def test_barometer_trend_falling_pressure() -> None:
 async def test_barometer_trend_null_when_no_archive_records() -> None:
     """AC 2.3: empty records list from archive yields barometerTrend = None."""
     data = _current_envelope(barometer=30.10)
-    archive = {"records": []}  # archive returned nothing
+    archive = {"data": []}  # archive returned nothing
     mock_client = _make_mock_client(archive, status_code=200)
 
     with patch(
@@ -289,3 +298,33 @@ async def test_barometer_trend_latency_under_200ms() -> None:
         f"enrich_barometer_trend() took {elapsed_ms:.1f} ms — expected < 200 ms. "
         "Enrichment overhead (excluding upstream I/O) should be negligible."
     )
+
+
+# ---------------------------------------------------------------------------
+# Archive query contract — ISO-8601 from/to window + correct field names
+# ---------------------------------------------------------------------------
+
+
+async def test_barometer_trend_queries_archive_with_iso_window() -> None:
+    """The archive query must bound a ±grace ISO-8601 window around the 3h-ago
+    target and request the ``timestamp`` field (not ``dateTime``).
+
+    Regression guard: a bare ``to=<target>&limit=1`` returns the OLDEST record
+    at or before the target (ascending order), which the grace check then
+    rejects → always-null. The fix bounds from/to around the target.
+    """
+    data = _current_envelope(barometer=30.10)
+    archive = _archive_response(barometer=30.05, date_time=_TS_HISTORICAL_EXACT)
+    mock_client = _make_mock_client(archive)
+
+    with patch(
+        "weewx_clearskies_realtime.proxy.get_upstream_client",
+        return_value=(mock_client, _UPSTREAM_URL),
+    ):
+        await enrich_barometer_trend(data)
+
+    params = mock_client.get.call_args.kwargs["params"]
+    assert params["fields"] == "barometer,timestamp"
+    assert params["limit"] == 1
+    assert params["from"] == _epoch_to_iso(_TS_HISTORICAL_EXACT - TREND_TIME_GRACE)
+    assert params["to"] == _epoch_to_iso(_TS_HISTORICAL_EXACT + TREND_TIME_GRACE)
