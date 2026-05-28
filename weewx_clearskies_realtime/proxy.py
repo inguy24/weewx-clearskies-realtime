@@ -46,6 +46,7 @@ _client: httpx.AsyncClient | None = None
 _transformer: UnitTransformer | None = None
 _upstream_url: str = ""
 _tls_verify: bool = False
+_enrichment_registry: "EnrichmentRegistry | None" = None
 
 # URL probed by the health readiness check.  Tried in order; first success wins.
 _HEALTH_PROBE_PATHS: tuple[str, ...] = ("/health/live", "/health/ready", "/api/v1/health")
@@ -104,16 +105,41 @@ def configure(
 
 
 async def close() -> None:
-    """Close the httpx client.  Called at app shutdown."""
-    global _client  # noqa: PLW0603
+    """Close the httpx client and reset enrichment state.  Called at app shutdown."""
+    global _client, _enrichment_registry  # noqa: PLW0603
     if _client is not None:
         await _client.aclose()
         _client = None
+    _enrichment_registry = None
 
 
 # ---------------------------------------------------------------------------
 # Route — catch-all /api/v1/* forward
 # ---------------------------------------------------------------------------
+
+
+def _run_enrichments(
+    method: str, path: str, status_code: int, data: object,
+) -> object:
+    """Apply registered enrichments to a parsed JSON response.
+
+    Only runs on successful GET requests with dict data.  Individual enrichment
+    failures are logged and skipped; remaining enrichments still run.
+    """
+    if (
+        _enrichment_registry is None
+        or method != "GET"
+        or status_code >= 400
+        or not isinstance(data, dict)
+    ):
+        return data
+    endpoint_key = path.split("/")[0] if path else ""
+    for fn in _enrichment_registry.get(endpoint_key):
+        try:
+            data = fn(data)
+        except Exception:  # noqa: BLE001
+            logger.exception("Enrichment failed for endpoint %s", endpoint_key)
+    return data
 
 
 @router.api_route(
@@ -157,14 +183,19 @@ async def proxy_api(request: Request, path: str) -> Response:
         return JSONResponse({"error": "upstream API timeout"}, status_code=504)
 
     content_type = upstream_resp.headers.get("content-type", "")
-    if "application/json" in content_type and _transformer is not None:
+    if "application/json" in content_type and (
+        _transformer is not None or _enrichment_registry is not None
+    ):
         try:
             data = upstream_resp.json()
-            converted = _apply_conversion(data)
-            return JSONResponse(converted, status_code=upstream_resp.status_code)
+            if _transformer is not None:
+                data = _apply_conversion(data)
+            data = _run_enrichments(
+                request.method, path, upstream_resp.status_code, data,
+            )
+            return JSONResponse(data, status_code=upstream_resp.status_code)
         except Exception:  # noqa: BLE001
-            # Conversion failed; fall through to raw pass-through below.
-            logger.debug("Unit conversion failed; passing through raw response")
+            logger.debug("Processing failed; passing through raw response")
 
     # Non-JSON or conversion failed — pass through raw.
     # Strip hop-by-hop headers from upstream response before forwarding.
@@ -268,6 +299,18 @@ class EnrichmentRegistry:
     def get(self, endpoint: str) -> list[EnrichmentFn]:
         """Return registered functions for endpoint, or an empty list if none."""
         return list(self._registry.get(endpoint, []))
+
+
+def register_enrichment(endpoint: str, fn: EnrichmentFn) -> None:
+    """Register an enrichment for the module-level proxy.
+
+    Creates a registry if none exists.  Multiple registrations on the same
+    endpoint accumulate and run in registration order.
+    """
+    global _enrichment_registry  # noqa: PLW0603
+    if _enrichment_registry is None:
+        _enrichment_registry = EnrichmentRegistry()
+    _enrichment_registry.register(endpoint, fn)
 
 
 def create_proxy_router(
