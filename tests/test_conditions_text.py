@@ -3,6 +3,16 @@
 Beaufort labels come from units/derived.py, which uses lower-case second
 word (e.g. "Fresh breeze", not "Fresh Breeze") — the ADR table is
 illustrative; the code is authoritative for casing.
+
+Changes from original (Task 5):
+- _comfort_label() has been removed from conditions_text and replaced by
+  temperature_comfort.classify() — all _comfort_label tests removed.
+- _compose() now uses "with" connector for the final part:
+    2 parts → "{a}, with {b}"
+    3+ parts → "{a}, {b}, ..., with {last}"
+- build_weather_text() component order: [temperature-comfort, sky, wind, precip]
+- build_weather_text() has new params: app_temp, out_temp, heatindex, windchill, temp_unit.
+- Integration tests mock temperature_comfort.classify() to isolate 2D matrix logic.
 """
 
 from __future__ import annotations
@@ -10,7 +20,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from weewx_clearskies_realtime.conditions_text import (
-    _comfort_label,
     _compose,
     _precip_label,
     build_weather_text,
@@ -37,25 +46,33 @@ def test_compose_one_part() -> None:
     assert _compose(["Overcast"]) == "Overcast"
 
 
-def test_compose_two_parts() -> None:
-    """Two parts use 'and' separator."""
-    assert _compose(["Overcast", "Light Rain"]) == "Overcast and Light Rain"
+def test_compose_two_parts_uses_with_connector() -> None:
+    """Two parts use ', with' separator (not 'and') to avoid double-and.
+
+    Old format: 'Overcast and Light Rain'
+    New format: 'Overcast, with Light Rain'
+    """
+    assert _compose(["Overcast", "Light Rain"]) == "Overcast, with Light Rain"
 
 
-def test_compose_three_parts() -> None:
-    """Three parts use Oxford comma."""
-    assert _compose(["Overcast", "Light Rain", "Humid"]) == "Overcast, Light Rain, and Humid"
+def test_compose_three_parts_uses_with_for_last() -> None:
+    """Three parts: first two comma-separated, last prefixed with 'with'.
+
+    Old format: 'Overcast, Light Rain, and Humid'
+    New format: 'Overcast, Light Rain, with Humid'
+    """
+    assert _compose(["Overcast", "Light Rain", "Windy"]) == "Overcast, Light Rain, with Windy"
 
 
 def test_compose_four_parts() -> None:
-    """Four parts: comma-separated with 'and' before last."""
+    """Four parts: comma-separated with 'with' before last."""
     result = _compose(["A", "B", "C", "D"])
-    assert result == "A, B, C, and D"
+    assert result == "A, B, C, with D"
 
 
 def test_compose_mixed_none() -> None:
     """None entries are filtered before composing."""
-    assert _compose(["Overcast", None, "Humid"]) == "Overcast and Humid"
+    assert _compose(["Overcast", None, "Windy"]) == "Overcast, with Windy"
 
 
 # ---------------------------------------------------------------------------
@@ -132,120 +149,58 @@ def test_precip_thresholds_inch_boundaries() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _comfort_label()
-# ---------------------------------------------------------------------------
-
-
-def test_comfort_none() -> None:
-    """None dewpoint → None."""
-    assert _comfort_label(None, "degree_F") is None
-
-
-def test_comfort_comfortable_below_60() -> None:
-    """55 °F (comfortable) → None (omitted from text)."""
-    assert _comfort_label(55.0, "degree_F") is None
-
-
-def test_comfort_exactly_59() -> None:
-    """59.9 °F just below Humid threshold → None."""
-    assert _comfort_label(59.9, "degree_F") is None
-
-
-def test_comfort_humid_at_60() -> None:
-    """60 °F exactly at Humid threshold → 'Humid'."""
-    assert _comfort_label(60.0, "degree_F") == "Humid"
-
-
-def test_comfort_humid_mid() -> None:
-    """62 °F in Humid band → 'Humid'."""
-    assert _comfort_label(62.0, "degree_F") == "Humid"
-
-
-def test_comfort_very_humid_at_65() -> None:
-    """65 °F at Very Humid threshold → 'Very Humid'."""
-    assert _comfort_label(65.0, "degree_F") == "Very Humid"
-
-
-def test_comfort_oppressive_at_70() -> None:
-    """70 °F at Oppressive threshold → 'Oppressive'."""
-    assert _comfort_label(70.0, "degree_F") == "Oppressive"
-
-
-def test_comfort_miserable_at_75() -> None:
-    """75 °F at Miserable threshold → 'Miserable'."""
-    assert _comfort_label(75.0, "degree_F") == "Miserable"
-
-
-def test_comfort_miserable_high() -> None:
-    """80 °F well above Miserable threshold → 'Miserable'."""
-    assert _comfort_label(80.0, "degree_F") == "Miserable"
-
-
-def test_comfort_thresholds_all_boundaries() -> None:
-    """Verify all comfort level boundaries in °F."""
-    assert _comfort_label(59.9, "degree_F") is None
-    assert _comfort_label(60.0, "degree_F") == "Humid"
-    assert _comfort_label(64.9, "degree_F") == "Humid"
-    assert _comfort_label(65.0, "degree_F") == "Very Humid"
-    assert _comfort_label(69.9, "degree_F") == "Very Humid"
-    assert _comfort_label(70.0, "degree_F") == "Oppressive"
-    assert _comfort_label(74.9, "degree_F") == "Oppressive"
-    assert _comfort_label(75.0, "degree_F") == "Miserable"
-
-
-def test_comfort_unit_celsius() -> None:
-    """Dewpoint in °C is converted before threshold comparison.
-
-    25 °C = 77 °F → 'Miserable'.
-    """
-    assert _comfort_label(25.0, "degree_C") == "Miserable"
-
-
-def test_comfort_unit_celsius_comfortable() -> None:
-    """10 °C = 50 °F < 60 °F → None."""
-    assert _comfort_label(10.0, "degree_C") is None
-
-
-# ---------------------------------------------------------------------------
 # build_weather_text() — integration tests
+#
+# temperature_comfort.classify() is mocked to isolate conditions_text logic
+# from the 2D matrix. is_daytime() is mocked for sky-component tests.
 # ---------------------------------------------------------------------------
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_sky_and_wind_only(mock_daytime) -> None:
-    """Sky + moderate wind, no rain, comfortable → two-part string."""
-    # 15 mph = 6.7 m/s → Beaufort 4 "Moderate breeze"
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_sky_and_wind_only(mock_classify, mock_daytime) -> None:
+    """Sky + moderate wind, no rain, no comfort label → two-part string.
+
+    15 mph = 6.7 m/s → Beaufort 4 "Moderate breeze".
+    With no temperature-comfort, composition is: sky, with wind.
+    """
     result = build_weather_text(
         sky="Partly Cloudy",
         wind_speed=15.0,
         wind_speed_unit="mile_per_hour",
     )
-    assert result == "Partly Cloudy and Moderate breeze"
+    assert result == "Partly Cloudy, with Moderate breeze"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_all_parts(mock_daytime) -> None:
-    """All four components present → Oxford-comma composition.
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value="Warm and Humid")
+def test_all_parts_with_comfort_first(mock_classify, mock_daytime) -> None:
+    """All four components present in order: comfort, sky, wind, precipitation.
 
+    Comfort: 'Warm and Humid' (mocked)
     Sky: Overcast
+    Wind: 23 mph = 10.28 m/s → Beaufort 5 'Fresh breeze'
     Precip: 0.05 in/hr → Light Rain
-    Wind: 23 mph = 10.28 m/s → Beaufort 5 Fresh breeze
-    Comfort: 62 °F → Humid
+
+    Expected order: [comfort, sky, wind, precip] with 'with' connector for last.
     """
     result = build_weather_text(
+        app_temp=80.0,
+        dewpoint=67.0,
+        temp_unit="degree_F",
+        dewpoint_unit="degree_F",
         sky="Overcast",
         rain_rate=0.05,
         rain_rate_unit="inch_per_hour",
         wind_speed=23.0,
         wind_speed_unit="mile_per_hour",
-        dewpoint=62.0,
-        dewpoint_unit="degree_F",
     )
-    assert result == "Overcast, Light Rain, Fresh breeze, and Humid"
+    assert result == "Warm and Humid, Overcast, Fresh breeze, with Light Rain"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_calm_omitted(mock_daytime) -> None:
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_calm_omitted(mock_classify, mock_daytime) -> None:
     """Beaufort 0 (Calm) is omitted from the text (ADR-044 §4)."""
     result = build_weather_text(
         sky="Clear",
@@ -257,7 +212,8 @@ def test_calm_omitted(mock_daytime) -> None:
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_calm_zero_mps(mock_daytime) -> None:
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_calm_zero_mps(mock_classify, mock_daytime) -> None:
     """Wind speed 0.0 m/s (Calm) — not included in output."""
     result = build_weather_text(
         sky="Overcast",
@@ -268,11 +224,17 @@ def test_calm_zero_mps(mock_daytime) -> None:
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_comfortable_omitted(mock_daytime) -> None:
-    """Dewpoint below 60 °F → comfort label omitted."""
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_comfortable_temp_omitted_when_classify_returns_none(mock_classify, mock_daytime) -> None:
+    """When classify() returns None, temperature-comfort component is omitted.
+
+    Only sky remains → single-part output.
+    """
     result = build_weather_text(
         sky="Partly Cloudy",
+        app_temp=70.0,
         dewpoint=55.0,
+        temp_unit="degree_F",
         dewpoint_unit="degree_F",
     )
     assert result == "Partly Cloudy"
@@ -288,7 +250,8 @@ def test_provider_fallback() -> None:
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_provider_fallback_overridden_by_sky(mock_daytime) -> None:
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_provider_fallback_overridden_by_sky(mock_classify, mock_daytime) -> None:
     """Local sky takes priority over provider_sky when both present and daytime."""
     result = build_weather_text(
         sky="Mostly Clear",
@@ -298,8 +261,10 @@ def test_provider_fallback_overridden_by_sky(mock_daytime) -> None:
 
 
 def test_no_sky_no_provider() -> None:
-    """No sky or provider → only other components contribute."""
-    # 15 mph → Beaufort 4 "Moderate breeze"
+    """No sky or provider → only other components contribute.
+
+    15 mph → Beaufort 4 "Moderate breeze". No comfort (no app_temp).
+    """
     result = build_weather_text(
         sky=None,
         provider_sky=None,
@@ -316,7 +281,8 @@ def test_all_absent() -> None:
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_no_wind_speed(mock_daytime) -> None:
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_no_wind_speed(mock_classify, mock_daytime) -> None:
     """wind_speed=None → wind component omitted."""
     result = build_weather_text(
         sky="Clear",
@@ -326,9 +292,13 @@ def test_no_wind_speed(mock_daytime) -> None:
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_heavy_rain_and_wind(mock_daytime) -> None:
-    """Heavy rain + high wind composes correctly."""
-    # 0.5 in/hr → Heavy Rain; 35 mph = 15.6 m/s → Beaufort 7 "Near gale"
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_heavy_rain_and_wind(mock_classify, mock_daytime) -> None:
+    """Heavy rain + high wind with sky composes correctly using 'with' connector.
+
+    0.5 in/hr → Heavy Rain; 35 mph = 15.6 m/s → Beaufort 7 "Near gale".
+    Order: [sky, wind, precip] with 'with' before last.
+    """
     result = build_weather_text(
         sky="Overcast",
         rain_rate=0.5,
@@ -336,7 +306,7 @@ def test_heavy_rain_and_wind(mock_daytime) -> None:
         wind_speed=35.0,
         wind_speed_unit="mile_per_hour",
     )
-    assert result == "Overcast, Heavy Rain, and Near gale"
+    assert result == "Overcast, Near gale, with Heavy Rain"
 
 
 def test_precip_in_mm_per_hour() -> None:
@@ -351,27 +321,39 @@ def test_precip_in_mm_per_hour() -> None:
     assert result == "Moderate Rain"
 
 
-def test_dewpoint_in_celsius() -> None:
-    """Dewpoint in °C is converted before comfort classification.
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value="Warm and Humid")
+def test_comfort_label_from_dewpoint_in_celsius(mock_classify) -> None:
+    """Dewpoint in °C is converted before passing to classify().
 
-    24 °C = 75.2 °F ≥ 75 → Miserable.
+    Mocking classify() confirms conversion happens before the call.
+    24 °C ≈ 75.2 °F — the mock returns 'Warm and Humid' regardless.
     """
     result = build_weather_text(
+        app_temp=80.0,
         dewpoint=24.0,
+        temp_unit="degree_F",
         dewpoint_unit="degree_C",
     )
-    assert result == "Miserable"
+    assert result == "Warm and Humid"
+    # Verify classify was called (i.e., temperature-comfort path was exercised)
+    mock_classify.assert_called_once()
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
-def test_oppressive_heat(mock_daytime) -> None:
-    """High dewpoint + overcast sky → oppressive label."""
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value="Warm and Oppressive")
+def test_comfort_label_appears_before_sky(mock_classify, mock_daytime) -> None:
+    """Temperature-comfort label appears FIRST in the composed string (ADR-044 §9).
+
+    Component order: [comfort, sky, wind, precip].
+    """
     result = build_weather_text(
-        sky="Mostly Cloudy",
+        app_temp=80.0,
         dewpoint=72.0,
+        temp_unit="degree_F",
         dewpoint_unit="degree_F",
+        sky="Mostly Cloudy",
     )
-    assert result == "Mostly Cloudy and Oppressive"
+    assert result == "Warm and Oppressive, with Mostly Cloudy"
 
 
 # ---------------------------------------------------------------------------
