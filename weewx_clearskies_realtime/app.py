@@ -11,7 +11,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse  # type: ignore[import-untyped]
@@ -23,8 +23,20 @@ from weewx_clearskies_realtime.sse.emitter import SSEEmitter
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
+def create_app(
+    settings: Settings,
+    emitter: SSEEmitter,
+    proxy_router: APIRouter | None = None,
+) -> FastAPI:
     """Return the main FastAPI application wired to the given SSEEmitter.
+
+    Args:
+        settings:     Loaded service settings.
+        emitter:      SSEEmitter instance that fans out loop packets.
+        proxy_router: Optional APIRouter from create_proxy_router(); when
+                      provided it is mounted so /api/v1/* requests are
+                      forwarded to the upstream clearskies-api.  Pass None
+                      (default) to run as a pure SSE bridge without the proxy.
 
     No OpenAPI docs are exposed in production — the SSE stream is the only
     public surface.
@@ -38,12 +50,17 @@ def create_app(settings: Settings, emitter: SSEEmitter) -> FastAPI:
 
     # CORS — configurable via settings.sse.allowed_origins (default "*").
     # Operators should restrict to dashboard origin(s) in production.
+    # Methods include POST/PUT/DELETE to support proxy pass-through for
+    # mutation endpoints on the upstream API.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.sse.allowed_origins,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
+
+    if proxy_router is not None:
+        app.include_router(proxy_router)
 
     @app.get("/sse")
     async def sse_endpoint(request: Request) -> EventSourceResponse:

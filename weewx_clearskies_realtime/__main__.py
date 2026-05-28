@@ -83,8 +83,14 @@ async def serve_all(
     settings: Any,  # Settings
     adapter: Any,  # MQTTAdapter | DirectAdapter
     sse_emitter: Any,  # SSEEmitter
+    http_client: Any | None = None,  # httpx.AsyncClient | None
 ) -> None:
-    """Start the adapter, fan-out, and both uvicorn servers; run until SIGTERM/SIGINT."""
+    """Start the adapter, fan-out, and both uvicorn servers; run until SIGTERM/SIGINT.
+
+    Args:
+        http_client: Optional httpx.AsyncClient used by the proxy router.
+                     When provided it is closed after servers have drained.
+    """
     import uvicorn  # type: ignore[import-untyped]
 
     loop = asyncio.get_running_loop()
@@ -158,6 +164,11 @@ async def serve_all(
     # Give servers a moment to drain.
     await asyncio.gather(*server_tasks, return_exceptions=True)
 
+    # Close the shared httpx client (proxy mode only).
+    if http_client is not None:
+        await http_client.aclose()
+        logger.info("HTTP client closed")
+
 
 # ---------------------------------------------------------------------------
 # main()
@@ -187,8 +198,16 @@ def main() -> None:
     setup_logging(settings.logging.level)
 
     # Step 4: build queue, adapter, emitter, apps.
+    import httpx
+
     from weewx_clearskies_realtime.app import create_app
-    from weewx_clearskies_realtime.health import create_health_app, register_readiness_probe
+    from weewx_clearskies_realtime.enrichment.packet_tap import process_packet
+    from weewx_clearskies_realtime.health import (
+        create_api_upstream_probe,
+        create_health_app,
+        register_readiness_probe,
+    )
+    from weewx_clearskies_realtime.proxy import EnrichmentRegistry, create_proxy_router
     from weewx_clearskies_realtime.sse.emitter import SSEEmitter
 
     packet_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
@@ -227,19 +246,37 @@ def main() -> None:
             "health_port": settings.health.bind_port,
         }
 
-    sse_emitter = SSEEmitter(packet_queue)
+    # Emitter: wire the packet-tap callback so enrichment processors receive
+    # every loop packet before it is broadcast to SSE subscribers.
+    sse_emitter = SSEEmitter(packet_queue, on_packet=process_packet)
 
-    main_app = create_app(settings, sse_emitter)
+    # --- Build httpx client and proxy router (BFF layer, ADR-041) ---
+    http_client = httpx.AsyncClient(
+        base_url=settings.api.upstream_url,
+        timeout=settings.api.timeout,
+        verify=settings.api.tls_verify,
+    )
+    enrichment_registry = EnrichmentRegistry()
+    proxy_router = create_proxy_router(http_client, settings.api.upstream_url, enrichment_registry)
+
+    main_app = create_app(settings, sse_emitter, proxy_router=proxy_router)
     health_app = create_health_app()
 
     # Register adapter health probe.
     register_readiness_probe(adapter.health_probe)
 
+    # Register upstream API connectivity probe.
+    register_readiness_probe(
+        create_api_upstream_probe(http_client, settings.api.upstream_url)
+    )
+
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
     # Step 6: run.
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(serve_all(main_app, health_app, settings, adapter, sse_emitter))
+        asyncio.run(
+            serve_all(main_app, health_app, settings, adapter, sse_emitter, http_client)
+        )
 
 
 if __name__ == "__main__":

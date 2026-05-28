@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,18 @@ KEEPALIVE_INTERVAL_SECONDS = 15
 class SSEEmitter:
     """Fan-out from a single source queue to N subscriber queues."""
 
-    def __init__(self, source: asyncio.Queue[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        source: asyncio.Queue[dict[str, Any]],
+        *,
+        on_packet: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self._source = source
         self._subscribers: set[asyncio.Queue[dict[str, Any] | None]] = set()
         self._fanout_task: asyncio.Task[None] | None = None
+        # Optional side-effect callback invoked for every packet before fan-out.
+        # Used to feed the enrichment packet-tap (process_packet).
+        self._on_packet = on_packet
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -124,6 +132,14 @@ class SSEEmitter:
                 packet = await self._source.get()
             except asyncio.CancelledError:
                 break
+
+            # Invoke the optional packet callback (e.g., enrichment tap) before
+            # broadcasting.  Failures are logged and do not interrupt fan-out.
+            if self._on_packet is not None:
+                try:
+                    self._on_packet(packet)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Packet callback failed")
 
             if not self._subscribers:
                 continue
