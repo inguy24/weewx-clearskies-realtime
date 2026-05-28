@@ -5,15 +5,22 @@ Separate FastAPI app on a loopback port.  Two routes:
   GET /health/ready  — runs registered readiness probes, aggregates results.
 
 No OpenAPI exposure.  No middleware.  Unauthenticated (loopback-only by default).
+
+Probe functions may be sync (Callable[[], ProbeResult]) or async
+(async Callable[[], ProbeResult]).  The readiness handler uses _run_probe()
+to await async probes and call sync probes directly.
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -41,7 +48,10 @@ _probes: list[Callable[[], ProbeResult]] = []
 
 
 def register_readiness_probe(probe_fn: Callable[[], ProbeResult]) -> None:
-    """Register a callable that returns a ProbeResult for the /health/ready endpoint."""
+    """Register a callable that returns a ProbeResult for the /health/ready endpoint.
+
+    The callable may be sync or async.
+    """
     _probes.append(probe_fn)
 
 
@@ -75,7 +85,7 @@ def create_health_app() -> FastAPI:
     @app.get("/health/ready")
     async def readiness() -> JSONResponse:
         """Readiness probe — runs all registered probes and aggregates."""
-        results = _run_probes()
+        results = await _run_probes()
         status_code, body = _aggregate(results)
         return JSONResponse(content=body, status_code=status_code)
 
@@ -83,15 +93,62 @@ def create_health_app() -> FastAPI:
 
 
 # ---------------------------------------------------------------------------
+# Upstream API probe factory
+# ---------------------------------------------------------------------------
+
+
+def create_api_upstream_probe(
+    client: httpx.AsyncClient,
+    upstream_url: str,
+) -> Callable[[], Any]:
+    """Return an async probe that checks upstream API connectivity.
+
+    Hits {upstream_url}/health with a 5 s timeout.  A 200 response is "ok";
+    any other status is "warning"; timeout or connect error is "unhealthy".
+    """
+
+    async def _probe() -> ProbeResult:
+        try:
+            resp = await client.get(f"{upstream_url}/health", timeout=5.0)
+            if resp.status_code == 200:
+                return ProbeResult("api_upstream", "ok")
+            return ProbeResult(
+                "api_upstream",
+                "warning",
+                [f"HTTP {resp.status_code}"],
+            )
+        except httpx.TimeoutException:
+            return ProbeResult("api_upstream", "unhealthy", ["upstream timeout"])
+        except httpx.ConnectError:
+            return ProbeResult("api_upstream", "unhealthy", ["upstream unreachable"])
+        except Exception as exc:  # noqa: BLE001
+            return ProbeResult("api_upstream", "unhealthy", [str(exc)])
+
+    return _probe
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _run_probes() -> list[ProbeResult]:
+async def _run_probe(fn: Callable[[], Any]) -> ProbeResult:
+    """Call fn and await the result if it is a coroutine.
+
+    Supports both sync probes (return ProbeResult directly) and async probes
+    (return a coroutine that resolves to ProbeResult).
+    """
+    result = fn()
+    if inspect.isawaitable(result):
+        result = await result
+    return result  # type: ignore[return-value]
+
+
+async def _run_probes() -> list[ProbeResult]:
     results: list[ProbeResult] = []
     for probe in _probes:
         try:
-            results.append(probe())
+            results.append(await _run_probe(probe))
         except Exception as exc:  # noqa: BLE001
             logger.error("Readiness probe raised an exception", exc_info=exc)
             results.append(ProbeResult(name="unknown", status="unhealthy", messages=[str(exc)]))

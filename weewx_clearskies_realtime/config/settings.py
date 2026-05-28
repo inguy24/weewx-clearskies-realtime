@@ -104,12 +104,24 @@ class LoggingSettings:
 
 
 @dataclass
+class ApiSettings:
+    """Settings for the upstream clearskies-api connection (BFF proxy, ADR-041)."""
+
+    upstream_url: str = "https://localhost:8765"
+    timeout: float = 10.0
+    # Set to False only for local development with a self-signed certificate.
+    # Never disable in production — operator's responsibility.
+    tls_verify: bool = True
+
+
+@dataclass
 class Settings:
     input: InputSettings = field(default_factory=InputSettings)
     mqtt: MQTTSettings = field(default_factory=MQTTSettings)
     sse: SSESettings = field(default_factory=SSESettings)
     health: HealthSettings = field(default_factory=HealthSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
+    api: ApiSettings = field(default_factory=ApiSettings)
 
 
 # ---------------------------------------------------------------------------
@@ -235,5 +247,12 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
     # env var overrides config file
     level = os.environ.get("CLEARSKIES_LOG_LEVEL", level_raw).upper()
     s.logging = LoggingSettings(level=level)
+
+    api_raw = raw.get("api", {})
+    s.api = ApiSettings(
+        upstream_url=str(api_raw.get("upstream_url", "https://localhost:8765")).strip(),
+        timeout=float(api_raw.get("timeout", 10.0)),
+        tls_verify=str(api_raw.get("tls_verify", "true")).strip().lower() not in ("false", "0", "no"),
+    )
 
     return s
