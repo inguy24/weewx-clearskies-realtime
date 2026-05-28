@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse  # type: ignore[import-untyped]
@@ -49,17 +49,12 @@ def _build_transformer(settings: Settings) -> UnitTransformer | None:
 def create_app(
     settings: Settings,
     emitter: SSEEmitter,
-    proxy_router: APIRouter | None = None,
 ) -> FastAPI:
     """Return the main FastAPI application wired to the given SSEEmitter.
 
     Args:
-        settings:     Loaded service settings.
-        emitter:      SSEEmitter instance that fans out loop packets.
-        proxy_router: Optional additional APIRouter (e.g., from
-                      create_proxy_router()) to mount alongside the
-                      module-level proxy router.  Pass None (default) for
-                      the standard configuration.
+        settings: Loaded service settings.
+        emitter:  SSEEmitter instance that fans out loop packets.
 
     Mounts the BFF proxy router for /api/v1/* forwarding (ADR-041).
     No OpenAPI docs are exposed in production.
@@ -106,10 +101,6 @@ def create_app(
     # BFF proxy routes — must be included before the generic exception handler
     # so that /api/v1/* paths are matched first.
     app.include_router(_module_proxy_router)
-
-    # Optional supplementary router (e.g., from create_proxy_router() factory).
-    if proxy_router is not None:
-        app.include_router(proxy_router)
 
     @app.get("/sse")
     async def sse_endpoint(request: Request) -> EventSourceResponse:

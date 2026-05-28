@@ -17,13 +17,6 @@ Two response shapes are handled:
      ``UnitTransformer.transform_record()`` can apply the right conversion.
 
 ADR-041: The realtime service is the dashboard's single backend gateway.
-
-Enrichment extension:
-  ``EnrichmentRegistry`` and ``create_proxy_router()`` provide an additive
-  factory-based API for registering post-conversion enrichment functions that
-  are applied to successful JSON GET responses.  This is supplementary to the
-  module-level ``router`` / ``configure()`` pattern used by the existing app;
-  both interfaces are intentionally preserved for backward compatibility.
 """
 
 from __future__ import annotations
@@ -55,21 +48,6 @@ _HEALTH_PROBE_PATHS: tuple[str, ...] = ("/health/live", "/health/ready", "/api/v
 # would confuse the upstream about the real host.
 _HOP_BY_HOP: frozenset[str] = frozenset(
     {"host", "connection", "transfer-encoding", "te", "trailer", "upgrade"}
-)
-
-# Full set of hop-by-hop headers per RFC 7230 §6.1, used by create_proxy_router().
-_HOP_BY_HOP_FULL: frozenset[str] = frozenset(
-    {
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "host",
-    }
 )
 
 # Type alias for an enrichment function.
@@ -280,9 +258,7 @@ class EnrichmentRegistry:
     "current" for /api/v1/current or /api/v1/current/detail.
 
     Enrichments are applied to successful JSON GET responses AFTER any unit
-    conversion performed by the module-level proxy_api route.  When
-    create_proxy_router() is used, enrichments are applied inside that router
-    instead.
+    conversion performed by the module-level proxy_api route.
     """
 
     def __init__(self) -> None:
@@ -311,157 +287,6 @@ def register_enrichment(endpoint: str, fn: EnrichmentFn) -> None:
     if _enrichment_registry is None:
         _enrichment_registry = EnrichmentRegistry()
     _enrichment_registry.register(endpoint, fn)
-
-
-def create_proxy_router(
-    client: httpx.AsyncClient,
-    upstream_url: str,
-    registry: EnrichmentRegistry,
-) -> APIRouter:
-    """Return an APIRouter with a catch-all /api/v1/{path} proxy route.
-
-    This factory creates an independent router with its own httpx client and
-    enrichment registry.  It is supplementary to the module-level ``router``
-    / ``configure()`` interface — both may coexist in the same application.
-
-    Args:
-        client:       Shared httpx async client (lifecycle managed by caller).
-        upstream_url: Base URL of the upstream clearskies-api service.
-        registry:     Enrichment registry consulted on successful JSON GETs.
-    """
-    factory_router = APIRouter()
-
-    @factory_router.api_route(
-        "/api/v1/{path:path}",
-        methods=["GET", "POST", "PUT", "DELETE"],
-    )
-    async def proxy_request(path: str, request: Request) -> Response:
-        """Forward the request to the upstream API and apply enrichments."""
-        # --- Build upstream URL ---
-        query = request.url.query
-        upstream_path = f"/api/v1/{path}"
-        if query:
-            upstream_path = f"{upstream_path}?{query}"
-
-        # --- Strip hop-by-hop and host headers ---
-        forwarded_headers = {
-            k: v
-            for k, v in request.headers.items()
-            if k.lower() not in _HOP_BY_HOP_FULL
-        }
-
-        # --- Forward body for non-GET methods ---
-        body: bytes | None = None
-        if request.method != "GET":
-            body = await request.body()
-
-        # --- Send to upstream ---
-        try:
-            upstream_response = await client.request(
-                method=request.method,
-                url=upstream_path,
-                headers=forwarded_headers,
-                content=body,
-            )
-        except httpx.TimeoutException:
-            logger.warning(
-                "Upstream API timed out",
-                extra={"path": path, "method": request.method},
-            )
-            return JSONResponse(
-                status_code=504,
-                media_type="application/problem+json",
-                content={
-                    "type": "about:blank",
-                    "title": "Gateway Timeout",
-                    "status": 504,
-                    "detail": "Upstream API timed out",
-                },
-            )
-        except httpx.ConnectError:
-            logger.warning(
-                "Upstream API unreachable",
-                extra={"path": path, "method": request.method},
-            )
-            return JSONResponse(
-                status_code=502,
-                media_type="application/problem+json",
-                content={
-                    "type": "about:blank",
-                    "title": "Bad Gateway",
-                    "status": 502,
-                    "detail": "Upstream API unreachable",
-                },
-            )
-
-        # --- Strip response headers that become invalid after body mutation ---
-        response_headers = {
-            k: v
-            for k, v in upstream_response.headers.items()
-            if k.lower() not in ("content-length", "content-encoding")
-        }
-
-        content_type = upstream_response.headers.get("content-type", "")
-
-        # --- Pass error responses through unchanged ---
-        if upstream_response.status_code >= 400:
-            return Response(
-                content=upstream_response.content,
-                status_code=upstream_response.status_code,
-                headers=response_headers,
-                media_type=content_type,
-            )
-
-        # --- Non-JSON or non-GET: pass through as-is ---
-        is_json = "application/json" in content_type
-        if not is_json or request.method != "GET":
-            return Response(
-                content=upstream_response.content,
-                status_code=upstream_response.status_code,
-                headers=response_headers,
-                media_type=content_type,
-            )
-
-        # --- JSON GET: parse body and apply enrichments ---
-        try:
-            data: dict[str, Any] = upstream_response.json()
-        except Exception:  # noqa: BLE001
-            # Upstream claimed JSON but sent malformed content; forward as-is.
-            logger.warning(
-                "Upstream returned non-parseable JSON",
-                extra={"path": path, "status": upstream_response.status_code},
-            )
-            return Response(
-                content=upstream_response.content,
-                status_code=upstream_response.status_code,
-                headers=response_headers,
-                media_type=content_type,
-            )
-
-        # Endpoint key = first segment of the path (e.g. "current", "charts").
-        endpoint_key = path.split("/")[0] if path else ""
-        enrichments = registry.get(endpoint_key)
-
-        for fn in enrichments:
-            try:
-                data = fn(data)
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Enrichment function raised an exception; continuing with current data",
-                    extra={
-                        "endpoint": endpoint_key,
-                        "function": getattr(fn, "__name__", repr(fn)),
-                    },
-                )
-                # Continue with whatever data state we had before this fn ran.
-
-        return JSONResponse(
-            content=data,
-            status_code=upstream_response.status_code,
-            headers=response_headers,
-        )
-
-    return factory_router
 
 
 # ---------------------------------------------------------------------------
