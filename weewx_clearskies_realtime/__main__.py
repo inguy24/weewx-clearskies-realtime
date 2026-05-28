@@ -268,6 +268,10 @@ def main() -> None:
     from weewx_clearskies_realtime.proxy import register_enrichment
     register_enrichment("current", enrich_barometer_trend)
 
+    # Register weather text enrichment for GET /api/v1/current.
+    from weewx_clearskies_realtime.enrichment.weather_text import enrich_weather_text
+    register_enrichment("current", enrich_weather_text)
+
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
     # Step 6: run.
