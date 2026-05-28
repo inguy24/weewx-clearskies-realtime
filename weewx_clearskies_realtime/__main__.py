@@ -257,6 +257,12 @@ def main() -> None:
         from weewx_clearskies_realtime.proxy import upstream_health_probe
         register_readiness_probe(upstream_health_probe)
 
+    # Register input smoother so every loop packet feeds the ring buffers
+    # used by the temperature-comfort classifier (ADR-044 §8).
+    from weewx_clearskies_realtime.enrichment.input_smoother import process_packet as smooth_packet
+    from weewx_clearskies_realtime.enrichment.packet_tap import register_processor
+    register_processor(smooth_packet)
+
     # Register barometer trend enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
     from weewx_clearskies_realtime.proxy import register_enrichment
