@@ -42,14 +42,14 @@ def _feed(kc_values: list[float], max_solar: float = 500.0) -> None:
 def test_clear_sky() -> None:
     """Steady high kc (0.92) with low variance → 'Clear'."""
     sky_condition.reset()
-    _feed([0.92] * 35)
+    _feed([0.92] * 40)
     assert sky_condition.classify() == "Clear"
 
 
 def test_overcast() -> None:
     """All kc values near 0.2 (well below 0.40 threshold) → 'Overcast'."""
     sky_condition.reset()
-    _feed([0.20] * 35)
+    _feed([0.20] * 40)
     assert sky_condition.classify() == "Overcast"
 
 
@@ -66,7 +66,7 @@ def test_partly_cloudy() -> None:
 def test_mostly_cloudy() -> None:
     """Steady kc at 0.60, low sigma → 'Mostly Cloudy'."""
     sky_condition.reset()
-    _feed([0.60] * 35)
+    _feed([0.60] * 40)
     assert sky_condition.classify() == "Mostly Cloudy"
 
 
@@ -88,9 +88,9 @@ def test_insufficient_data() -> None:
 
 
 def test_exactly_min_samples() -> None:
-    """Exactly 30 samples should return a classification (not None)."""
+    """Exactly 36 samples (_MIN_SAMPLES) should return a classification (not None)."""
     sky_condition.reset()
-    _feed([0.90] * 30)
+    _feed([0.90] * 36)
     assert sky_condition.classify() is not None
 
 
@@ -118,10 +118,10 @@ def test_daytime_at_threshold_accepted() -> None:
     """maxSolarRad exactly = 50 is NOT night (≥ 50) — accepted into buffer."""
     sky_condition.reset()
     now = time.time()
-    for i in range(30):
+    for i in range(40):
         # kc = 40/50 = 0.8 (inside 0.40–0.85 band)
         sky_condition.update(40.0, 50.0, timestamp=now - i * 2)
-    # Should have 30 samples and return a classification.
+    # Should have 40 samples (≥ _MIN_SAMPLES=36) and return a classification.
     assert sky_condition.classify() is not None
 
 
@@ -165,7 +165,7 @@ def test_kc_clamped_above_1_2() -> None:
     """kc > 1.2 (extreme cloud-edge) is clamped to 1.2 — still classifies."""
     sky_condition.reset()
     # radiation much greater than max_solar → kc > 1.2 without clamping.
-    _feed([1.5] * 35, max_solar=100.0)  # raw kc = 150/100 = 1.5, clamped to 1.2
+    _feed([1.5] * 40, max_solar=100.0)  # raw kc = 150/100 = 1.5, clamped to 1.2
     # mean_kc = 1.2 ≥ 0.85, sigma = 0 < 0.10 → Clear.
     assert sky_condition.classify() == "Clear"
 
@@ -186,7 +186,35 @@ def test_is_daytime_false_empty() -> None:
 def test_reset_clears_buffer() -> None:
     """reset() makes classify() return None immediately."""
     sky_condition.reset()
-    _feed([0.90] * 35)
+    _feed([0.90] * 40)
     assert sky_condition.classify() == "Clear"
     sky_condition.reset()
+    assert sky_condition.classify() is None
+
+
+# ---------------------------------------------------------------------------
+# Acceptance criteria tests (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_fewer_than_36_samples_returns_none() -> None:
+    """With 35 samples (< _MIN_SAMPLES=36), classify() returns None."""
+    sky_condition.reset()
+    _feed([0.90] * 35)
+    assert sky_condition.classify() is None
+
+
+def test_buffer_cleared_at_sunset_transition() -> None:
+    """When max_solar_rad drops below threshold, buffer is cleared."""
+    sky_condition.reset()
+    now = time.time()
+    # Feed 40 daytime readings.
+    for i in range(40):
+        sky_condition.update(400.0, 500.0, timestamp=now - (40 - i) * 5)
+    assert sky_condition.classify() is not None  # buffer has data
+
+    # Now send a night reading (max_solar_rad < 50).
+    sky_condition.update(0.0, 10.0, timestamp=now + 5)
+
+    # Buffer should be cleared by sunset transition detection.
     assert sky_condition.classify() is None

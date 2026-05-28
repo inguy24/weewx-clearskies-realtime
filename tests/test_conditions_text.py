@@ -7,6 +7,8 @@ illustrative; the code is authoritative for casing.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from weewx_clearskies_realtime.conditions_text import (
     _comfort_label,
     _compose,
@@ -209,7 +211,8 @@ def test_comfort_unit_celsius_comfortable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sky_and_wind_only() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_sky_and_wind_only(mock_daytime) -> None:
     """Sky + moderate wind, no rain, comfortable → two-part string."""
     # 15 mph = 6.7 m/s → Beaufort 4 "Moderate breeze"
     result = build_weather_text(
@@ -220,7 +223,8 @@ def test_sky_and_wind_only() -> None:
     assert result == "Partly Cloudy and Moderate breeze"
 
 
-def test_all_parts() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_all_parts(mock_daytime) -> None:
     """All four components present → Oxford-comma composition.
 
     Sky: Overcast
@@ -240,7 +244,8 @@ def test_all_parts() -> None:
     assert result == "Overcast, Light Rain, Fresh breeze, and Humid"
 
 
-def test_calm_omitted() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_calm_omitted(mock_daytime) -> None:
     """Beaufort 0 (Calm) is omitted from the text (ADR-044 §4)."""
     result = build_weather_text(
         sky="Clear",
@@ -251,7 +256,8 @@ def test_calm_omitted() -> None:
     assert result == "Clear"
 
 
-def test_calm_zero_mps() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_calm_zero_mps(mock_daytime) -> None:
     """Wind speed 0.0 m/s (Calm) — not included in output."""
     result = build_weather_text(
         sky="Overcast",
@@ -261,7 +267,8 @@ def test_calm_zero_mps() -> None:
     assert result == "Overcast"
 
 
-def test_comfortable_omitted() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_comfortable_omitted(mock_daytime) -> None:
     """Dewpoint below 60 °F → comfort label omitted."""
     result = build_weather_text(
         sky="Partly Cloudy",
@@ -280,8 +287,9 @@ def test_provider_fallback() -> None:
     assert result == "Foggy"
 
 
-def test_provider_fallback_overridden_by_sky() -> None:
-    """Local sky takes priority over provider_sky when both present."""
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_provider_fallback_overridden_by_sky(mock_daytime) -> None:
+    """Local sky takes priority over provider_sky when both present and daytime."""
     result = build_weather_text(
         sky="Mostly Clear",
         provider_sky="Foggy",
@@ -307,7 +315,8 @@ def test_all_absent() -> None:
     assert result == ""
 
 
-def test_no_wind_speed() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_no_wind_speed(mock_daytime) -> None:
     """wind_speed=None → wind component omitted."""
     result = build_weather_text(
         sky="Clear",
@@ -316,7 +325,8 @@ def test_no_wind_speed() -> None:
     assert result == "Clear"
 
 
-def test_heavy_rain_and_wind() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_heavy_rain_and_wind(mock_daytime) -> None:
     """Heavy rain + high wind composes correctly."""
     # 0.5 in/hr → Heavy Rain; 35 mph = 15.6 m/s → Beaufort 7 "Near gale"
     result = build_weather_text(
@@ -353,7 +363,8 @@ def test_dewpoint_in_celsius() -> None:
     assert result == "Miserable"
 
 
-def test_oppressive_heat() -> None:
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+def test_oppressive_heat(mock_daytime) -> None:
     """High dewpoint + overcast sky → oppressive label."""
     result = build_weather_text(
         sky="Mostly Cloudy",
@@ -361,3 +372,18 @@ def test_oppressive_heat() -> None:
         dewpoint_unit="degree_F",
     )
     assert result == "Mostly Cloudy and Oppressive"
+
+
+# ---------------------------------------------------------------------------
+# Acceptance criteria tests (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_night_falls_back_to_provider_sky() -> None:
+    """When is_daytime() is False, sky parameter is ignored; provider_sky used."""
+    # Don't mock is_daytime — leave buffer empty so is_daytime() returns False naturally.
+    result = build_weather_text(
+        sky="Clear",  # this should be ignored at night
+        provider_sky="Mostly Cloudy",
+    )
+    assert result == "Mostly Cloudy"
