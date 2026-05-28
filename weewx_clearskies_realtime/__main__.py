@@ -263,6 +263,10 @@ def main() -> None:
     from weewx_clearskies_realtime.enrichment.packet_tap import register_processor
     register_processor(smooth_packet)
 
+    # Register UV smoother so every loop packet feeds the UV ring buffer.
+    from weewx_clearskies_realtime.enrichment.uv_smoother import accumulate_uv
+    register_processor(accumulate_uv)
+
     # Register barometer trend enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
     from weewx_clearskies_realtime.proxy import register_enrichment
@@ -271,6 +275,10 @@ def main() -> None:
     # Register weather text enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.weather_text import enrich_weather_text
     register_enrichment("current", enrich_weather_text)
+
+    # Register UV smoothing enrichment for GET /api/v1/current.
+    from weewx_clearskies_realtime.enrichment.uv_smoother import enrich_uv
+    register_enrichment("current", enrich_uv)
 
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
