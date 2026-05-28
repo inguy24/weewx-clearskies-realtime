@@ -72,3 +72,49 @@ bind_port = 8082
 # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
 # Override with CLEARSKIES_LOG_LEVEL env var.
 level = INFO
+
+
+[api]
+# BFF proxy mode (ADR-041): upstream API URL on the weewx host.
+# When set, /api/v1/* requests are forwarded to this URL.
+# Leave commented out to disable the proxy.
+# upstream_url = https://weewx-host:8765
+
+# Upstream request timeout in seconds.
+# timeout = 30
+
+# Verify TLS certificates for the upstream API.
+# Set to true when the weewx host has a valid certificate.
+# tls_verify = false
+
+
+[units]
+# Operator display units for the BFF conversion layer (ADR-041 / ADR-042).
+# When configured, all proxied REST responses and SSE events are converted
+# to these units before delivery to the dashboard.
+# Leave this section commented out to disable unit conversion.
+
+    [[groups]]
+    # Map each observation group to its display unit.
+    # group_temperature = degree_F
+    # group_speed = mile_per_hour
+    # group_pressure = inHg
+    # group_rain = inch
+    # group_rainrate = inch_per_hour
+    # group_altitude = foot
+    # group_distance = mile
+
+    [[labels]]
+    # Override the default display label for a unit.
+    # degree_F = " °F"
+    # mile_per_hour = " mph"
+
+    [[string_formats]]
+    # Override the default printf-style format string for a unit.
+    # degree_F = %.1f
+    # inch = %.2f
+
+    [[ordinates]]
+    # Override the 16-point compass direction labels (N through NNW, clockwise).
+    # Must supply exactly 16 comma-separated values if overriding.
+    # directions = N, NNE, NE, ENE, E, ESE, SE, SSE, S, SSW, SW, WSW, W, WNW, NW, NNW

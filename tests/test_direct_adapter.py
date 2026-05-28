@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Skip marker for platforms without AF_UNIX
+# ---------------------------------------------------------------------------
+
+requires_unix_socket = pytest.mark.skipif(
+    not hasattr(socket, "AF_UNIX"),
+    reason="Unix domain sockets not available on this platform",
+)
 
 from weewx_clearskies_realtime.adapters.direct import DirectAdapter
 from weewx_clearskies_realtime.config.settings import DirectSettings
@@ -106,6 +116,7 @@ def _make_mock_connection(lines: list[bytes]) -> tuple[AsyncMock, MagicMock]:
     return reader, writer
 
 
+@requires_unix_socket
 async def test_packet_flow_valid_json(
     adapter: DirectAdapter, queue: asyncio.Queue[dict[str, Any]]
 ) -> None:
@@ -130,6 +141,7 @@ async def test_packet_flow_valid_json(
     assert received == packet
 
 
+@requires_unix_socket
 async def test_invalid_json_lines_are_skipped(
     adapter: DirectAdapter, queue: asyncio.Queue[dict[str, Any]]
 ) -> None:
@@ -149,6 +161,7 @@ async def test_invalid_json_lines_are_skipped(
     assert queue.empty()
 
 
+@requires_unix_socket
 async def test_non_dict_json_is_skipped(
     adapter: DirectAdapter, queue: asyncio.Queue[dict[str, Any]]
 ) -> None:
@@ -174,6 +187,7 @@ async def test_non_dict_json_is_skipped(
 # ---------------------------------------------------------------------------
 
 
+@requires_unix_socket
 async def test_reconnect_on_connection_reset_error(
     adapter: DirectAdapter,
 ) -> None:
@@ -205,6 +219,7 @@ async def test_reconnect_on_connection_reset_error(
     assert adapter.connected is False
 
 
+@requires_unix_socket
 async def test_reconnect_on_file_not_found(
     adapter: DirectAdapter,
 ) -> None:
