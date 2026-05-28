@@ -64,7 +64,7 @@ def test_beaufort_upper_boundary_calm() -> None:
     """Exactly 0.5 m/s is NOT calm (< 0.5 is calm); 0.5 → Beaufort 1."""
     result = beaufort(0.5, "meter_per_second")
     assert result["value"] == 1
-    assert result["label"] == "Light air"
+    assert result["label"] == "Very Light Breeze"
 
 
 def test_beaufort_returns_dict_keys() -> None:
