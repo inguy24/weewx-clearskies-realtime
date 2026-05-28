@@ -24,8 +24,9 @@ _WINDOW_SECONDS: float = 1800.0
 
 # Minimum samples before a classification is returned. Fewer than this
 # means we don't have enough statistical power; caller should fall back to
-# provider sky data or omit the sky descriptor.
-_MIN_SAMPLES: int = 30
+# provider sky data or omit the sky descriptor. 36 samples at ~5 s intervals
+# = ~3 minutes of minimum observation before classification begins.
+_MIN_SAMPLES: int = 36
 
 # Night/twilight guard: maxSolarRad below this (W/m²) means solar analysis
 # is unreliable. Skip adding to the buffer.
@@ -49,6 +50,11 @@ _KC_MAX: float = 1.2
 # Stores (timestamp_epoch_seconds, kc) tuples. Deque has no fixed maxlen
 # because window eviction is time-based, not count-based.
 _buffer: deque[tuple[float, float]] = deque()
+
+# Tracks whether the previous update() call was during daytime. Used to detect
+# the daytime→night transition so stale daytime readings can be cleared from
+# the buffer at sunset (prevents night conditions from inheriting daytime kc).
+_was_daytime: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +80,15 @@ def update(
     """
     if timestamp is None:
         timestamp = time.time()
+
+    # Detect daytime→night transition and clear stale daytime readings.
+    # This prevents yesterday's clear-sky kc values from persisting into the
+    # night period and producing spurious classifications at next sunrise.
+    global _was_daytime
+    currently_daytime = max_solar_rad is not None and max_solar_rad >= _MIN_SOLAR_RAD
+    if _was_daytime and not currently_daytime:
+        _buffer.clear()
+    _was_daytime = currently_daytime
 
     # Night/twilight guard.
     if max_solar_rad is None or max_solar_rad < _MIN_SOLAR_RAD:
@@ -150,8 +165,10 @@ def is_daytime() -> bool:
 
 
 def reset() -> None:
-    """Clear the rolling buffer.
+    """Clear the rolling buffer and reset transition state.
 
     Intended for test isolation only. Not called during normal operation.
     """
+    global _was_daytime
     _buffer.clear()
+    _was_daytime = False

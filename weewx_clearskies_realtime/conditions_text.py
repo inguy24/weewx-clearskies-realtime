@@ -139,8 +139,12 @@ def build_weather_text(
     """
     parts: list[str | None] = []
 
-    # Sky condition: local solar analysis primary, provider fallback.
-    effective_sky = sky if sky is not None else provider_sky
+    # Sky condition: use local solar classification only during daytime.
+    # At night, fall back to provider sky data (ADR-044 §1b).
+    if sky is not None and _sky_condition_module.is_daytime():
+        effective_sky = sky
+    else:
+        effective_sky = provider_sky
     parts.append(effective_sky)
 
     # Precipitation.
