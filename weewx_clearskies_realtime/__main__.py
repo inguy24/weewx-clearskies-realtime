@@ -257,6 +257,11 @@ def main() -> None:
         from weewx_clearskies_realtime.proxy import upstream_health_probe
         register_readiness_probe(upstream_health_probe)
 
+    # Register barometer trend enrichment for GET /api/v1/current.
+    from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
+    from weewx_clearskies_realtime.proxy import register_enrichment
+    register_enrichment("current", enrich_barometer_trend)
+
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
     # Step 6: run.
