@@ -16,7 +16,7 @@ from .conversion import convert
 
 _BEAUFORT_SCALE: list[tuple[float, int, str]] = [
     (0.5,  0,  "Calm"),
-    (1.6,  1,  "Light air"),
+    (1.6,  1,  "Very Light Breeze"),
     (3.4,  2,  "Light breeze"),
     (5.5,  3,  "Gentle breeze"),
     (8.0,  4,  "Moderate breeze"),
