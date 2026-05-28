@@ -200,3 +200,36 @@ async def test_event_generator_yields_event_before_keepalive(emitter: SSEEmitter
     assert events[0]["event"] == "loop"
     assert "keepalive" not in str(events[0])
     emitter.unsubscribe(sub_q)
+
+
+# ---------------------------------------------------------------------------
+# 1.12: on_packet callback is called before fan-out broadcast
+# ---------------------------------------------------------------------------
+
+
+async def test_on_packet_called_before_broadcast(
+    source_queue: asyncio.Queue[dict[str, Any]],
+) -> None:
+    """1.12: SSEEmitter(on_packet=fn) calls fn for every packet before it is
+    broadcast to subscriber queues.
+
+    The callback must have been invoked by the time the subscriber receives
+    the packet from its own queue.
+    """
+    calls: list[dict[str, Any]] = []
+    emitter_with_tap = SSEEmitter(source_queue, on_packet=lambda p: calls.append(p))
+    emitter_with_tap.start()
+
+    sub_q = emitter_with_tap.subscribe()
+    packet: dict[str, Any] = {"temp": 72}
+    await source_queue.put(packet)
+
+    # Wait for the packet to arrive at the subscriber queue.
+    received = await asyncio.wait_for(sub_q.get(), timeout=1.0)
+
+    # The callback must have been invoked with the original packet.
+    assert calls == [{"temp": 72}]
+    # The subscriber also received the same packet.
+    assert received == packet
+
+    emitter_with_tap.stop()

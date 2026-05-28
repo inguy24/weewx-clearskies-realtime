@@ -50,11 +50,13 @@ def reset_proxy_state() -> None:
     proxy_mod._transformer = None
     proxy_mod._upstream_url = ""
     proxy_mod._tls_verify = False
+    proxy_mod._enrichment_registry = None
     yield
     proxy_mod._client = None
     proxy_mod._transformer = None
     proxy_mod._upstream_url = ""
     proxy_mod._tls_verify = False
+    proxy_mod._enrichment_registry = None
 
 
 @pytest.fixture()
@@ -505,3 +507,181 @@ def test_proxy_extras_unknown_field_passthrough(app_with_transform: FastAPI) -> 
     extras = obs["extras"]
     # luminosity has no OBS_GROUP entry → unchanged raw float.
     assert extras["luminosity"] == pytest.approx(12345.678, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Test 1.3: POST, PUT, DELETE are forwarded with correct method and body
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("method,status_code", [
+    ("POST", 201),
+    ("PUT", 200),
+    ("DELETE", 204),
+])
+@respx.mock
+def test_proxy_forwards_non_get_methods(
+    method: str, status_code: int, app_no_transform: FastAPI
+) -> None:
+    """1.3: POST, PUT, and DELETE requests are forwarded to upstream with correct
+    method, status code, and request body.
+    """
+    import json as _json
+
+    resource_path = "/api/v1/some/resource"
+    upstream_url = f"{_UPSTREAM}{resource_path}"
+    body_payload = {"name": "test-resource", "value": 42}
+    body_bytes = _json.dumps(body_payload).encode()
+
+    response_body = {"id": "abc123"} if status_code != 204 else None
+
+    if method == "POST":
+        route = respx.post(upstream_url).mock(
+            return_value=HttpxResponse(status_code, json=response_body or {})
+        )
+    elif method == "PUT":
+        route = respx.put(upstream_url).mock(
+            return_value=HttpxResponse(status_code, json=response_body or {})
+        )
+    else:  # DELETE
+        route = respx.delete(upstream_url).mock(
+            return_value=HttpxResponse(status_code, content=b"")
+        )
+
+    with TestClient(app_no_transform) as client:
+        resp = client.request(
+            method,
+            resource_path,
+            content=body_bytes,
+            headers={"content-type": "application/json"},
+        )
+
+    assert resp.status_code == status_code
+    assert route.called
+
+    # For POST and PUT, verify body was forwarded to upstream.
+    if method in ("POST", "PUT"):
+        forwarded_body = route.calls[0].request.content
+        assert _json.loads(forwarded_body) == body_payload
+
+
+# ---------------------------------------------------------------------------
+# Test 1.5: error responses (4xx/5xx) forwarded with correct status and body
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status_code", [400, 404, 500])
+@respx.mock
+def test_proxy_forwards_error_status_codes(
+    status_code: int, app_no_transform: FastAPI
+) -> None:
+    """1.5: 400, 404, and 500 error responses from upstream are forwarded with
+    same status code and body.
+    """
+    error_body = {"error": "test error"}
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(status_code, json=error_body)
+    )
+    with TestClient(app_no_transform) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == status_code
+    assert resp.json() == error_body
+
+
+# ---------------------------------------------------------------------------
+# Test 1.9: enrichment runs on GET /current and merges result
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_enrichment_runs_on_get_current() -> None:
+    """1.9: A registered enrichment is applied to a successful GET /current
+    response and its output is merged into the returned JSON.
+    """
+    from weewx_clearskies_realtime.proxy import register_enrichment
+
+    configure(upstream_url=_UPSTREAM, timeout=10, tls_verify=False, transformer=None)
+    app = FastAPI()
+    app.include_router(router)
+
+    register_enrichment("current", lambda data: {**data, "enriched": True})
+
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json={"temp": 72})
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["temp"] == 72
+    assert body["enriched"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 1.10: enrichment failure does not suppress the original response
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_enrichment_failure_still_returns_response() -> None:
+    """1.10: When a registered enrichment raises an exception, the original
+    upstream data is returned unchanged rather than a 500 error.
+    """
+    from weewx_clearskies_realtime.proxy import register_enrichment
+
+    configure(upstream_url=_UPSTREAM, timeout=10, tls_verify=False, transformer=None)
+    app = FastAPI()
+    app.include_router(router)
+
+    def _crashing_enrichment(data: dict) -> dict:
+        _ = 1 / 0  # ZeroDivisionError
+        return data
+
+    register_enrichment("current", _crashing_enrichment)
+
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json={"temp": 72})
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"temp": 72}
+
+
+# ---------------------------------------------------------------------------
+# Test 1.11: multiple enrichments run sequentially and each sees prior output
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_multiple_enrichments_run_sequentially() -> None:
+    """1.11: Multiple enrichments registered for the same endpoint run in
+    registration order; each enrichment receives the output of the previous one.
+    """
+    from weewx_clearskies_realtime.proxy import register_enrichment
+
+    configure(upstream_url=_UPSTREAM, timeout=10, tls_verify=False, transformer=None)
+    app = FastAPI()
+    app.include_router(router)
+
+    register_enrichment("current", lambda d: {**d, "step1": True})
+    register_enrichment(
+        "current",
+        lambda d: {**d, "step2": True, "saw_step1": d.get("step1", False)},
+    )
+
+    respx.get(f"{_UPSTREAM}/api/v1/current").mock(
+        return_value=HttpxResponse(200, json={"temp": 72})
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/current")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["step1"] is True
+    assert body["step2"] is True
+    # saw_step1 proves enrichment 2 saw enrichment 1's output
+    assert body["saw_step1"] is True

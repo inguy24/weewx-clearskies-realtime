@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 from weewx_clearskies_realtime.health import (
@@ -130,3 +131,48 @@ def test_health_app_no_openapi(client: TestClient) -> None:
     """Health app must not expose OpenAPI endpoints."""
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 1.13: create_api_upstream_probe() factory
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upstream_api_probe_ok() -> None:
+    """1.13a: create_api_upstream_probe() returns "ok" when upstream /health returns 200."""
+    import httpx as _httpx
+    import respx as _respx
+
+    from weewx_clearskies_realtime.health import create_api_upstream_probe
+
+    client = _httpx.AsyncClient()
+    probe = create_api_upstream_probe(client, "http://upstream:8765")
+    _respx.get("http://upstream:8765/health").mock(
+        return_value=_httpx.Response(200)
+    )
+    result = await probe()
+    await client.aclose()
+
+    assert result.status == "ok"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upstream_api_probe_unhealthy_on_connect_error() -> None:
+    """1.13b: create_api_upstream_probe() returns "unhealthy" when upstream is unreachable."""
+    import httpx as _httpx
+    import respx as _respx
+
+    from weewx_clearskies_realtime.health import create_api_upstream_probe
+
+    client = _httpx.AsyncClient()
+    probe = create_api_upstream_probe(client, "http://upstream:8765")
+    _respx.get("http://upstream:8765/health").mock(
+        side_effect=_httpx.ConnectError("connection refused")
+    )
+    result = await probe()
+    await client.aclose()
+
+    assert result.status == "unhealthy"

@@ -247,3 +247,79 @@ def test_mqtt_password_none_when_no_username(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("WEEWX_CLEARSKIES_MQTT_PASSWORD", raising=False)
     s = MQTTSettings(username="", password_env="WEEWX_CLEARSKIES_MQTT_PASSWORD")  # noqa: S106
     assert s.password is None  # No warning, no crash
+
+
+# ---------------------------------------------------------------------------
+# 1.14: ApiSettings parsed from [api] config section
+# ---------------------------------------------------------------------------
+
+
+def test_parse_api_section(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """1.14: [api] section values (upstream_url, timeout, tls_verify) are parsed
+    into ApiSettings with correct types.
+    """
+    conf = tmp_path / "realtime.conf"
+    conf.write_text(
+        textwrap.dedent("""
+            [input]
+            mode = direct
+
+            [sse]
+            bind_port = 8766
+
+            [health]
+            bind_port = 8082
+
+            [logging]
+            level = INFO
+
+            [api]
+            upstream_url = https://api.example.com:8765
+            timeout = 15
+            tls_verify = true
+        """)
+    )
+    monkeypatch.setenv("CLEARSKIES_CONFIG", str(conf))
+    s = load_settings()
+
+    assert s.api.upstream_url == "https://api.example.com:8765"
+    assert s.api.timeout == 15
+    assert s.api.tls_verify is True
+
+
+# ---------------------------------------------------------------------------
+# 1.15: secret-leak guard rejects api_key in [api] section
+# ---------------------------------------------------------------------------
+
+
+def test_secret_leak_guard_rejects_api_section_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """1.15: A key matching _(KEY|SECRET|TOKEN|PASSWORD)$ in the [api] section
+    raises RuntimeError — secrets must come from env vars, not the config file.
+
+    'api_key' matches the _KEY$ pattern and must be rejected.
+    """
+    conf = tmp_path / "realtime.conf"
+    conf.write_text(
+        textwrap.dedent("""
+            [input]
+            mode = direct
+
+            [sse]
+            bind_port = 8766
+
+            [health]
+            bind_port = 8082
+
+            [logging]
+            level = INFO
+
+            [api]
+            upstream_url = https://api.example.com:8765
+            api_key = secret123
+        """)
+    )
+    monkeypatch.setenv("CLEARSKIES_CONFIG", str(conf))
+    with pytest.raises(RuntimeError, match="secret"):
+        load_settings()
