@@ -34,7 +34,11 @@ def process_packet(packet: dict) -> None:  # type: ignore[type-arg]
     (non-numeric) are silently skipped.
     """
     for field, buf in _buffers.items():
-        value = packet.get(field)
+        raw = packet.get(field)
+        if raw is None:
+            continue
+        # Packets may be unit-converted dicts {value, label, formatted}.
+        value = raw.get("value") if isinstance(raw, dict) else raw
         if value is not None:
             try:
                 buf.add(float(value))

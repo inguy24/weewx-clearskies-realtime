@@ -36,7 +36,11 @@ def accumulate_uv(packet: dict) -> None:  # type: ignore[type-arg]
     Called by packet_tap for every loop packet.  Non-numeric and None values
     are silently skipped.  Must not modify the packet dict.
     """
-    value = packet.get("UV")
+    raw = packet.get("UV")
+    if raw is None:
+        return
+    # Packets may be unit-converted dicts {value, label, formatted}.
+    value = raw.get("value") if isinstance(raw, dict) else raw
     if value is None:
         return
     try:
