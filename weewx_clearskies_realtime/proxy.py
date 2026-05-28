@@ -21,8 +21,9 @@ ADR-041: The realtime service is the dashboard's single backend gateway.
 
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -50,8 +51,8 @@ _HOP_BY_HOP: frozenset[str] = frozenset(
     {"host", "connection", "transfer-encoding", "te", "trailer", "upgrade"}
 )
 
-# Type alias for an enrichment function.
-EnrichmentFn = Callable[[dict[str, Any]], dict[str, Any]]
+# Type alias for an enrichment function.  May be sync or async.
+EnrichmentFn = Callable[[dict[str, Any]], "dict[str, Any] | Awaitable[dict[str, Any]]"]
 
 
 def configure(
@@ -91,18 +92,26 @@ async def close() -> None:
     _enrichment_registry = None
 
 
+def get_upstream_client() -> tuple[httpx.AsyncClient | None, str]:
+    """Return the upstream httpx client and base URL for enrichment use."""
+    return _client, _upstream_url
+
+
 # ---------------------------------------------------------------------------
 # Route — catch-all /api/v1/* forward
 # ---------------------------------------------------------------------------
 
 
-def _run_enrichments(
+async def _run_enrichments(
     method: str, path: str, status_code: int, data: object,
 ) -> object:
     """Apply registered enrichments to a parsed JSON response.
 
     Only runs on successful GET requests with dict data.  Individual enrichment
     failures are logged and skipped; remaining enrichments still run.
+
+    Supports both sync and async enrichment functions — if the result of calling
+    an enrichment function is awaitable, it is awaited before proceeding.
     """
     if (
         _enrichment_registry is None
@@ -114,7 +123,10 @@ def _run_enrichments(
     endpoint_key = path.split("/")[0] if path else ""
     for fn in _enrichment_registry.get(endpoint_key):
         try:
-            data = fn(data)
+            result = fn(data)
+            if inspect.isawaitable(result):
+                result = await result
+            data = result
         except Exception:  # noqa: BLE001
             logger.exception("Enrichment failed for endpoint %s", endpoint_key)
     return data
@@ -168,7 +180,7 @@ async def proxy_api(request: Request, path: str) -> Response:
             data = upstream_resp.json()
             if _transformer is not None:
                 data = _apply_conversion(data)
-            data = _run_enrichments(
+            data = await _run_enrichments(
                 request.method, path, upstream_resp.status_code, data,
             )
             return JSONResponse(data, status_code=upstream_resp.status_code)
