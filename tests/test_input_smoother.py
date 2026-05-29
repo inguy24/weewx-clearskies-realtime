@@ -154,3 +154,80 @@ def test_exactly_9_samples_returns_none() -> None:
         input_smoother.process_packet(_make_packet(appTemp=65.0))
     result = input_smoother.get_smoothed("appTemp")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# MQTT suffixed field names feed canonical buffers (Bug A fix)
+# ---------------------------------------------------------------------------
+
+
+def test_suffixed_mqtt_packet_feeds_outtemp_buffer() -> None:
+    """MQTT suffix 'outTemp_F' must feed the 'outTemp' buffer.
+
+    Bug A: process_packet() used to look up the literal field name from the
+    packet; MQTT-mode packets have suffixed names (outTemp_F, not outTemp) so
+    the buffer was never filled.  After the fix, strip_suffix normalises the
+    name first so outTemp_F → outTemp.
+    """
+    input_smoother.reset()
+    for _ in range(15):
+        input_smoother.process_packet({"outTemp_F": "72.5"})
+    result = input_smoother.get_smoothed("outTemp")
+    assert result is not None, (
+        "outTemp buffer must be filled by a packet with key 'outTemp_F'"
+    )
+    assert abs(result - 72.5) < 0.001
+
+
+def test_suffixed_mqtt_packet_feeds_windspeed_buffer() -> None:
+    """MQTT suffix 'windSpeed_mph' must feed the 'windSpeed' buffer."""
+    input_smoother.reset()
+    for _ in range(15):
+        input_smoother.process_packet({"windSpeed_mph": "10.0"})
+    result = input_smoother.get_smoothed("windSpeed")
+    assert result is not None, (
+        "windSpeed buffer must be filled by a packet with key 'windSpeed_mph'"
+    )
+    assert abs(result - 10.0) < 0.001
+
+
+def test_suffixed_mqtt_packet_feeds_rainrate_buffer() -> None:
+    """MQTT suffix 'rainRate_inch_per_hour' must feed the 'rainRate' buffer."""
+    input_smoother.reset()
+    for _ in range(15):
+        input_smoother.process_packet({"rainRate_inch_per_hour": "0.05"})
+    result = input_smoother.get_smoothed("rainRate")
+    assert result is not None, (
+        "rainRate buffer must be filled by a packet with key 'rainRate_inch_per_hour'"
+    )
+    assert abs(result - 0.05) < 0.001
+
+
+def test_canonical_name_still_works_after_fix() -> None:
+    """Direct-mode canonical name 'outTemp' still feeds the outTemp buffer.
+
+    strip_suffix on a name without a known suffix is a no-op that returns
+    the original name, so direct-mode packets are unaffected by the fix.
+    """
+    input_smoother.reset()
+    for _ in range(15):
+        input_smoother.process_packet({"outTemp": 68.0})
+    result = input_smoother.get_smoothed("outTemp")
+    assert result is not None
+    assert abs(result - 68.0) < 0.001
+
+
+def test_mixed_suffixed_packet_feeds_multiple_buffers() -> None:
+    """A single MQTT packet with multiple suffixed fields fills all buffers."""
+    input_smoother.reset()
+    for _ in range(15):
+        input_smoother.process_packet({
+            "outTemp_F": "75.0",
+            "windSpeed_mph": "8.0",
+            "rainRate_inch_per_hour": "0.0",
+            "dewpoint_F": "60.0",
+        })
+    assert input_smoother.get_smoothed("outTemp") is not None
+    assert abs(input_smoother.get_smoothed("outTemp") - 75.0) < 0.001  # type: ignore[operator]
+    assert input_smoother.get_smoothed("windSpeed") is not None
+    assert abs(input_smoother.get_smoothed("windSpeed") - 8.0) < 0.001  # type: ignore[operator]

@@ -9,6 +9,7 @@ Buffer capacities assume ~5-second loop packet intervals.
 from __future__ import annotations
 
 from weewx_clearskies_realtime.enrichment.ring_buffer import RingBuffer
+from weewx_clearskies_realtime.mqtt_fields import strip_suffix
 
 # Buffer capacities (samples at ~5-second interval per ADR-044 §8)
 _buffers: dict[str, RingBuffer] = {
@@ -32,16 +33,30 @@ def process_packet(packet: dict) -> None:  # type: ignore[type-arg]
     Called by packet_tap for every loop packet.  Extracts known fields
     and adds non-None values to the corresponding ring buffer.  Bad values
     (non-numeric) are silently skipped.
+
+    MQTT packets carry suffixed field names (e.g. ``outTemp_F``, ``windSpeed_mph``).
+    We strip the suffix to obtain the canonical base name before doing the
+    buffer lookup, so both MQTT-mode and direct-mode packets feed the same
+    buffers.  For direct-mode packets the suffix strip is a no-op.
     """
+    # Build a canonical-name → raw-value view of the packet.
+    # strip_suffix returns (base_name, unit); we only need the base_name here.
+    canonical: dict[str, object] = {}
+    for field_name, raw_value in packet.items():
+        base_name, _ = strip_suffix(field_name)
+        # When multiple suffixed variants map to the same base (should not
+        # happen in practice) keep the first encountered value.
+        canonical.setdefault(base_name, raw_value)
+
     for field, buf in _buffers.items():
-        raw = packet.get(field)
+        raw = canonical.get(field)
         if raw is None:
             continue
         # Packets may be unit-converted dicts {value, label, formatted}.
-        value = raw.get("value") if isinstance(raw, dict) else raw
+        value = raw.get("value") if isinstance(raw, dict) else raw  # type: ignore[union-attr]
         if value is not None:
             try:
-                buf.add(float(value))
+                buf.add(float(value))  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 pass
 

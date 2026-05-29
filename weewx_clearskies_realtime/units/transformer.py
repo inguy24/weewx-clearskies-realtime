@@ -22,29 +22,6 @@ from .labels import format_value, get_label
 _METADATA_FIELDS: frozenset[str] = frozenset({"dateTime", "usUnits", "interval"})
 
 
-def _extract_value(entry: object) -> float | None:
-    """Extract a numeric value from a converted record entry or a raw number.
-
-    Handles both the dict shape {"value": float, ...} (converted entries) and
-    plain int/float values (raw archive records). Returns None for None, missing
-    keys, or non-numeric values.
-    """
-    if entry is None:
-        return None
-    if isinstance(entry, dict):
-        val = entry.get("value")
-        if val is None:
-            return None
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-    try:
-        return float(entry)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
-        return None
-
-
 # Default 16-point compass ordinate labels (weewx default order).
 _DEFAULT_ORDINATES: list[str] = [
     "N", "NNE", "NE", "ENE",
@@ -144,47 +121,6 @@ class UnitTransformer:
                 except (ValueError, TypeError):
                     pass
 
-        # --- Sky condition and weatherText (ADR-044) ---
-        # Lazy imports to avoid circular dependency (conditions_text →
-        # units.conversion → units.__init__ → transformer → conditions_text).
-        from .. import sky_condition as _sky
-        from ..conditions_text import build_weather_text as _build_wt
-
-        # radiation group is always watt_per_meter_squared across all unit
-        # systems, so raw values == display values. Safe to feed into the
-        # sky_condition buffer from either path.
-        raw_radiation = data.get("radiation")
-        raw_max_solar = data.get("maxSolarRad")
-        if raw_radiation is not None and raw_max_solar is not None:
-            try:
-                _sky.update(float(raw_radiation), float(raw_max_solar))
-            except (ValueError, TypeError):
-                pass
-
-        sky = _sky.classify()
-
-        # Extract display-unit values for weatherText components.
-        wind_val = _extract_value(result.get("windSpeed"))
-        target_speed = self._targets.get("group_speed")
-        dewpoint_val = _extract_value(result.get("dewpoint"))
-        target_temp = self._targets.get("group_temperature")
-        rain_rate_val = _extract_value(result.get("rainRate"))
-        target_rainrate = self._targets.get("group_rainrate")
-
-        result["weatherText"] = {
-            "value": _build_wt(
-                sky=sky,
-                rain_rate=rain_rate_val,
-                rain_rate_unit=target_rainrate if target_rainrate else "inch_per_hour",
-                wind_speed=wind_val,
-                wind_speed_unit=target_speed if target_speed else "mile_per_hour",
-                dewpoint=dewpoint_val,
-                dewpoint_unit=target_temp if target_temp else "degree_F",
-            ),
-            "label": "",
-            "formatted": "",
-        }
-
         return result
 
     def transform_field(
@@ -280,39 +216,16 @@ class UnitTransformer:
                 except (ValueError, TypeError):
                     pass
 
-        # --- Sky condition and weatherText (ADR-044) ---
-        from .. import sky_condition as _sky
-        from ..conditions_text import build_weather_text as _build_wt
-
-        # radiation is always watt_per_meter_squared; display value == raw
-        # value. Update the rolling buffer from the already-converted record.
-        rad_val = _extract_value(record.get("radiation"))
-        max_val = _extract_value(record.get("maxSolarRad"))
-        if rad_val is not None and max_val is not None:
-            try:
-                _sky.update(rad_val, max_val)
-            except (ValueError, TypeError):
-                pass
-
-        sky = _sky.classify()
-
-        wind_val = _extract_value(record.get("windSpeed"))
-        target_speed_unit = self._targets.get("group_speed")
-        dewpoint_val = _extract_value(record.get("dewpoint"))
-        target_temp_unit = self._targets.get("group_temperature")
-        rain_rate_val = _extract_value(record.get("rainRate"))
-        target_rainrate_unit = self._targets.get("group_rainrate")
+        # --- weatherText (ADR-044) via shared composer (smoothed inputs) ---
+        # Lazy import mirrors the existing lazy-import pattern; avoids the
+        # conditions_text ↔ units circular-dependency at import time.
+        # sky_condition.update() is NOT called here — that is the packet-tap's
+        # responsibility (see enrichment/sky_tap.py).  Calling it here too
+        # would double-count radiation samples from the REST/archive path.
+        from ..enrichment.weather_text import compose_weather_text as _compose_wt
 
         record["weatherText"] = {
-            "value": _build_wt(
-                sky=sky,
-                rain_rate=rain_rate_val,
-                rain_rate_unit=target_rainrate_unit if target_rainrate_unit else "inch_per_hour",
-                wind_speed=wind_val,
-                wind_speed_unit=target_speed_unit if target_speed_unit else "mile_per_hour",
-                dewpoint=dewpoint_val,
-                dewpoint_unit=target_temp_unit if target_temp_unit else "degree_F",
-            ),
+            "value": _compose_wt() or "",
             "label": "",
             "formatted": "",
         }

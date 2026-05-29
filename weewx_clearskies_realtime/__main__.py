@@ -267,6 +267,13 @@ def main() -> None:
     from weewx_clearskies_realtime.enrichment.uv_smoother import accumulate_uv
     register_processor(accumulate_uv)
 
+    # Register sky-condition tap so every loop packet feeds the solar buffer
+    # used by the sky classifier (ADR-044).  Must run as a packet-tap and NOT
+    # inside transform_record/add_derived_fields to avoid double-counting REST
+    # archive samples in the rolling window.
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet as sky_tap
+    register_processor(sky_tap)
+
     # Register barometer trend enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
     from weewx_clearskies_realtime.proxy import register_enrichment

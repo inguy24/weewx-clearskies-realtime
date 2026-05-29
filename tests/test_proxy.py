@@ -376,10 +376,14 @@ def test_proxy_converts_observation_envelope_us(app_with_transform: FastAPI) -> 
     assert not isinstance(humidity, dict), f"expected flat scalar, got {humidity!r}"
     assert humidity == pytest.approx(65.0, abs=0.5)
 
-    # weatherText: transform_record always adds this; its value is a plain string.
-    weather_text = obs.get("weatherText")
-    assert isinstance(weather_text, str), (
-        f"expected weatherText to be a plain string, got {weather_text!r}"
+    # weatherText is NOT produced by transform_record (Bug C fix).
+    # It is produced solely by the enrich_weather_text enrichment, which is
+    # registered separately via register_enrichment() in __main__.py.
+    # This test fixture does not register enrichments, so weatherText must be
+    # absent from the data dict here.
+    assert "weatherText" not in obs, (
+        "transform_record must NOT produce weatherText; "
+        "that is the enrichment pipeline's responsibility"
     )
 
     # timestamp is a string, not a known observation → passed through raw.

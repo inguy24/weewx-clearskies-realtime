@@ -338,3 +338,158 @@ def test_add_derived_fields_metric_display_units() -> None:
 
     assert record["beaufort"]["value"] == 6
     assert record["comfortIndex"] == "heatIndex"
+
+
+# ---------------------------------------------------------------------------
+# Bug C fix: transform_record() must NOT produce weatherText or call sky.update
+# ---------------------------------------------------------------------------
+
+
+def test_transform_record_does_not_produce_weather_text() -> None:
+    """transform_record() must NOT return a 'weatherText' key (Bug C fix).
+
+    After the fix, weatherText is produced only by the enrichment path
+    (enrich_weather_text), not by the REST/archive transformer.
+    """
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+
+    t = UnitTransformer(
+        target_units={
+            "group_temperature": "degree_F",
+            "group_speed": "mile_per_hour",
+        }
+    )
+    record = {"outTemp": 72.0, "windSpeed": 10.0}
+    result = t.transform_record(record, us_units=1)
+    assert "weatherText" not in result, (
+        "transform_record() must NOT produce 'weatherText' — that is the enrichment's job"
+    )
+
+
+def test_transform_record_does_not_call_sky_update() -> None:
+    """transform_record() must NOT call sky_condition.update() (Bug C fix).
+
+    sky.update() is now the packet-tap's responsibility only. Calling it
+    from transform_record() would double-count REST-path archive samples.
+    """
+    from unittest.mock import patch
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+    from weewx_clearskies_realtime import sky_condition
+
+    t = UnitTransformer(
+        target_units={
+            "group_temperature": "degree_F",
+            "group_speed": "mile_per_hour",
+        }
+    )
+    record = {"outTemp": 72.0, "windSpeed": 10.0, "radiation": 400.0, "maxSolarRad": 500.0}
+
+    with patch.object(sky_condition, "update") as mock_update:
+        t.transform_record(record, us_units=1)
+        assert mock_update.call_count == 0, (
+            f"transform_record() must NOT call sky_condition.update(); "
+            f"called {mock_update.call_count} time(s)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bug C fix: add_derived_fields() uses shared composer; no sky.update call
+# ---------------------------------------------------------------------------
+
+
+def test_add_derived_fields_includes_weather_text() -> None:
+    """add_derived_fields() must include 'weatherText' in the record (MQTT path)."""
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+    from weewx_clearskies_realtime.enrichment import input_smoother
+    from weewx_clearskies_realtime import sky_condition
+
+    input_smoother.reset()
+    sky_condition.reset()
+
+    t = UnitTransformer(
+        target_units={
+            "group_temperature": "degree_F",
+            "group_speed": "mile_per_hour",
+        }
+    )
+    record: dict = {
+        "windSpeed": {"value": 10.0, "label": " mph", "formatted": "10"},
+        "outTemp":   {"value": 72.0, "label": "°F",   "formatted": "72.0"},
+    }
+    t.add_derived_fields(record)
+
+    assert "weatherText" in record, "add_derived_fields() must produce a 'weatherText' key"
+    wt = record["weatherText"]
+    assert isinstance(wt, dict)
+    assert "value" in wt
+    assert isinstance(wt["value"], str)
+
+
+def test_add_derived_fields_does_not_call_sky_update() -> None:
+    """add_derived_fields() must NOT call sky_condition.update() (Bug C fix).
+
+    The sky buffer is now fed exclusively by the sky_tap packet processor.
+    """
+    from unittest.mock import patch
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+    from weewx_clearskies_realtime import sky_condition
+    from weewx_clearskies_realtime.enrichment import input_smoother
+
+    input_smoother.reset()
+    sky_condition.reset()
+
+    t = UnitTransformer(
+        target_units={
+            "group_temperature": "degree_F",
+            "group_speed": "mile_per_hour",
+        }
+    )
+    record: dict = {
+        "windSpeed":   {"value": 10.0, "label": " mph", "formatted": "10"},
+        "outTemp":     {"value": 72.0, "label": "°F",   "formatted": "72.0"},
+        "radiation":   {"value": 400.0, "label": "W/m²", "formatted": "400"},
+        "maxSolarRad": {"value": 500.0, "label": "W/m²", "formatted": "500"},
+    }
+
+    with patch.object(sky_condition, "update") as mock_update:
+        t.add_derived_fields(record)
+        assert mock_update.call_count == 0, (
+            f"add_derived_fields() must NOT call sky_condition.update(); "
+            f"called {mock_update.call_count} time(s)"
+        )
+
+
+def test_add_derived_fields_weather_text_uses_shared_composer() -> None:
+    """add_derived_fields() uses compose_weather_text() (shared composer).
+
+    Verify that the weatherText value in the record comes from the shared
+    compose_weather_text() function rather than a local build_weather_text()
+    call with raw display-unit values.
+    """
+    from unittest.mock import patch
+    from weewx_clearskies_realtime.units.transformer import UnitTransformer
+    from weewx_clearskies_realtime.enrichment import input_smoother
+    from weewx_clearskies_realtime import sky_condition
+    import weewx_clearskies_realtime.enrichment.weather_text as wt_mod
+
+    input_smoother.reset()
+    sky_condition.reset()
+
+    t = UnitTransformer(
+        target_units={
+            "group_temperature": "degree_F",
+            "group_speed": "mile_per_hour",
+        }
+    )
+    record: dict = {
+        "windSpeed": {"value": 10.0, "label": " mph", "formatted": "10"},
+        "outTemp":   {"value": 72.0, "label": "°F",   "formatted": "72.0"},
+    }
+
+    sentinel = "SENTINEL_FROM_SHARED_COMPOSER"
+    with patch.object(wt_mod, "compose_weather_text", return_value=sentinel):
+        t.add_derived_fields(record)
+
+    assert record["weatherText"]["value"] == sentinel, (
+        "add_derived_fields() must use compose_weather_text() for weatherText"
+    )

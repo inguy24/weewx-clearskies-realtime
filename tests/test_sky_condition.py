@@ -218,3 +218,101 @@ def test_buffer_cleared_at_sunset_transition() -> None:
 
     # Buffer should be cleared by sunset transition detection.
     assert sky_condition.classify() is None
+
+
+# ---------------------------------------------------------------------------
+# sky_tap — update_from_packet() tests (Bug D fix)
+# ---------------------------------------------------------------------------
+
+
+def test_sky_tap_feeds_buffer_from_canonical_packet() -> None:
+    """update_from_packet() feeds sky_condition from a direct-mode (canonical) packet.
+
+    Direct-mode packets have canonical field names (no suffix), so
+    strip_suffix is a no-op and the values are passed straight through.
+    """
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+
+    sky_condition.reset()
+    now = time.time()
+    # Feed 40 daytime readings via the tap.
+    for i in range(40):
+        update_from_packet({
+            "radiation": 400.0,
+            "maxSolarRad": 500.0,
+        })
+    # Buffer should have 40 entries → classify should return a result.
+    assert sky_condition.classify() is not None, (
+        "update_from_packet() must feed sky_condition with canonical-name packets"
+    )
+
+
+def test_sky_tap_feeds_buffer_from_suffixed_mqtt_packet() -> None:
+    """update_from_packet() feeds sky_condition from MQTT suffixed packet.
+
+    MQTT packets carry 'radiation_Wpm2' and 'maxSolarRad_Wpm2'.
+    The tap must strip the suffix to find the canonical names and feed the buffer.
+    """
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+
+    sky_condition.reset()
+    for i in range(40):
+        update_from_packet({
+            "radiation_Wpm2": "400.0",
+            "maxSolarRad_Wpm2": "500.0",
+        })
+    assert sky_condition.classify() is not None, (
+        "update_from_packet() must feed sky_condition from MQTT suffixed packets"
+    )
+
+
+def test_sky_tap_skips_when_radiation_missing() -> None:
+    """update_from_packet() skips sky.update when radiation is absent."""
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+    from unittest.mock import patch
+
+    sky_condition.reset()
+    with patch.object(sky_condition, "update") as mock_update:
+        update_from_packet({"maxSolarRad": 500.0})
+        assert mock_update.call_count == 0, (
+            "update_from_packet() must not call sky_condition.update when radiation missing"
+        )
+
+
+def test_sky_tap_skips_when_max_solar_missing() -> None:
+    """update_from_packet() skips sky.update when maxSolarRad is absent."""
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+    from unittest.mock import patch
+
+    sky_condition.reset()
+    with patch.object(sky_condition, "update") as mock_update:
+        update_from_packet({"radiation": 400.0})
+        assert mock_update.call_count == 0, (
+            "update_from_packet() must not call sky_condition.update when maxSolarRad missing"
+        )
+
+
+def test_sky_tap_handles_dict_value_shape() -> None:
+    """update_from_packet() extracts float from converted {value, label, formatted} dicts."""
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+
+    sky_condition.reset()
+    for _ in range(40):
+        update_from_packet({
+            "radiation":   {"value": 400.0, "label": "W/m²", "formatted": "400"},
+            "maxSolarRad": {"value": 500.0, "label": "W/m²", "formatted": "500"},
+        })
+    assert sky_condition.classify() is not None, (
+        "update_from_packet() must handle dict-valued fields"
+    )
+
+
+def test_sky_tap_ignores_non_numeric_values() -> None:
+    """update_from_packet() silently ignores non-numeric field values."""
+    from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet
+    from unittest.mock import patch
+
+    sky_condition.reset()
+    with patch.object(sky_condition, "update") as mock_update:
+        update_from_packet({"radiation": "bad", "maxSolarRad": "also_bad"})
+        assert mock_update.call_count == 0
