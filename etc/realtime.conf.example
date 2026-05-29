@@ -75,17 +75,33 @@ level = INFO
 
 
 [api]
-# BFF proxy mode (ADR-041): upstream API URL on the weewx host.
-# When set, /api/v1/* requests are forwarded to this URL.
-# Leave commented out to disable the proxy.
-# upstream_url = https://weewx-host:8765
-
+# REQUIRED — upstream clearskies-api URL for BFF proxy mode (ADR-041).
+#
+# Caddy routes ALL /api/v1/* traffic to the realtime BFF (port 8766), which
+# unit-converts responses before sending them to the dashboard.  The BFF must
+# know where the upstream API lives.  If upstream_url is empty or missing,
+# every /api/v1/* request returns 503 and THE WHOLE SITE FAILS.
+#
+# SINGLE-HOST (docker compose, single-host/): both services are compose
+# services on the same host — use the compose service name as the hostname.
+# upstream_url = https://api:8765
+# tls_verify = false
+#
+# FRONTEND-HOST (docker compose, frontend-host/): realtime runs on the
+# front-end host; the API runs on a separate weewx host.  Set to the weewx
+# host's external or LAN address.
+# upstream_url = https://weewx-host.example.com:8765
+# tls_verify = false
+#
+# NATIVE / REVERSE-PROXY (pip-installed, both services on the same host):
+# upstream_url = https://localhost:8765
+# tls_verify = false
+#
+# tls_verify = false is correct for the default self-signed API certificate.
+# Set to true only when the weewx host has a CA-signed certificate.
+#
 # Upstream request timeout in seconds.
 # timeout = 30
-
-# Verify TLS certificates for the upstream API.
-# Set to true when the weewx host has a valid certificate.
-# tls_verify = false
 
 
 [units]
