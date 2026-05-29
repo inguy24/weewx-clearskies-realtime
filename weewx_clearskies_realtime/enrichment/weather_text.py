@@ -33,6 +33,8 @@ def compose_weather_text() -> str:
         rain_rate_unit="inch_per_hour",
         wind_speed=get_smoothed("windSpeed"),
         wind_speed_unit="mile_per_hour",
+        wind_gust=get_smoothed("windGust"),
+        wind_gust_unit="mile_per_hour",
         app_temp=get_smoothed("appTemp"),
         dewpoint=get_smoothed("dewpoint"),
         out_temp=get_smoothed("outTemp"),

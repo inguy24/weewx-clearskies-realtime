@@ -135,6 +135,47 @@ def test_compose_weather_text_uses_smoothed_values() -> None:
     assert kw["rain_rate_unit"] == "inch_per_hour"
 
 
+def test_compose_weather_text_passes_wind_gust_to_builder() -> None:
+    """compose_weather_text() passes wind_gust from the smoothed windGust buffer.
+
+    Fills the windGust ring buffer and captures the kwargs forwarded to
+    build_weather_text().  Verifies wind_gust is present, close to the fed
+    value, and wind_gust_unit is "mile_per_hour" (consistent with wind_speed_unit).
+    """
+    input_smoother.reset()
+    sky_condition.reset()
+    # Feed windGust packets past the minimum 10-sample threshold.
+    for _ in range(15):
+        input_smoother.process_packet({
+            "windSpeed": 8.0,
+            "windGust": 22.0,
+        })
+
+    captured: list[dict] = []
+
+    def _capture_build(**kwargs):  # type: ignore[no-untyped-def]
+        captured.append(kwargs)
+        return "Fresh breeze and Gusty"
+
+    with patch(
+        "weewx_clearskies_realtime.enrichment.weather_text.build_weather_text",
+        side_effect=_capture_build,
+    ):
+        compose_weather_text()
+
+    assert len(captured) == 1
+    kw = captured[0]
+    # wind_gust kwarg must be present and carry the smoothed windGust value.
+    assert "wind_gust" in kw, "compose_weather_text() must pass wind_gust kwarg"
+    assert kw["wind_gust"] is not None, "wind_gust must be non-None when buffer has data"
+    assert abs(kw["wind_gust"] - 22.0) < 0.5, (
+        f"Expected wind_gust ~ 22.0, got {kw['wind_gust']}"
+    )
+    assert kw.get("wind_gust_unit") == "mile_per_hour", (
+        f"Expected wind_gust_unit='mile_per_hour', got {kw.get('wind_gust_unit')!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # enrich_weather_text() — placement inside data["data"] (Bug B fix)
 # ---------------------------------------------------------------------------

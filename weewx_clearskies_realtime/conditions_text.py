@@ -98,6 +98,8 @@ def build_weather_text(
     rain_rate_unit: str = "inch_per_hour",
     wind_speed: float | None = None,
     wind_speed_unit: str = "mile_per_hour",
+    wind_gust: float | None = None,
+    wind_gust_unit: str = "mile_per_hour",
     app_temp: float | None = None,
     dewpoint: float | None = None,
     out_temp: float | None = None,
@@ -115,6 +117,13 @@ def build_weather_text(
     Null/absent components are dropped.  Calm wind (Beaufort 0) is omitted
     to keep the text clean (ADR-044 §4).
 
+    The "and Gusty" qualifier is appended to the Beaufort label when:
+      windGust ≥ windSpeed + 12 mph AND windGust ≥ 18 mph  (ADR-044 §4)
+    Both thresholds are evaluated in mph regardless of source_unit.
+    The gusty check only fires when wind_speed is non-Calm (Beaufort > 0) —
+    Calm is already suppressed from the text, so "and Gusty" has no label
+    to attach to.  Calm + high-gust = no wind text (conscious design choice).
+
     Smoothed inputs from ``enrichment.input_smoother`` should be passed by
     the caller when available; this function performs no smoothing itself.
 
@@ -125,6 +134,8 @@ def build_weather_text(
         rain_rate_unit:  Unit of rain_rate (default "inch_per_hour").
         wind_speed:      Wind speed value.
         wind_speed_unit: Unit of wind_speed (default "mile_per_hour").
+        wind_gust:       Wind gust speed value.
+        wind_gust_unit:  Unit of wind_gust (default "mile_per_hour").
         app_temp:        Apparent temperature (feels-like) value.
         dewpoint:        Dewpoint value.
         out_temp:        Dry-bulb temperature value.
@@ -168,11 +179,30 @@ def build_weather_text(
     parts.append(effective_sky)
 
     # 3. Wind (Beaufort label). Beaufort 0 = Calm is omitted per ADR-044 §4.
+    # "and Gusty" qualifier fires inside this block so it only attaches to a
+    # non-Calm label — a gusty sensor reading when sustained wind is Calm
+    # produces no wind text at all (see docstring rationale above).
     if wind_speed is not None:
         try:
             b = beaufort(wind_speed, wind_speed_unit)
             if b["value"] > 0:
-                parts.append(str(b["label"]))
+                wind_label = str(b["label"])
+
+                # Gusty check — ADR-044 §4 thresholds in mph.
+                # Convert both speeds to mph using their declared source units
+                # so non-mph stations (knots, m/s, km/h) remain correct.
+                if wind_gust is not None:
+                    speed_mph = convert(wind_speed, wind_speed_unit, "mile_per_hour")
+                    gust_mph = convert(wind_gust, wind_gust_unit, "mile_per_hour")
+                    if (
+                        speed_mph is not None
+                        and gust_mph is not None
+                        and gust_mph >= speed_mph + 12.0
+                        and gust_mph >= 18.0
+                    ):
+                        wind_label = wind_label + " and Gusty"
+
+                parts.append(wind_label)
         except (ValueError, TypeError):
             pass
 

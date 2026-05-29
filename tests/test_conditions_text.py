@@ -369,3 +369,174 @@ def test_night_falls_back_to_provider_sky() -> None:
         provider_sky="Mostly Cloudy",
     )
     assert result == "Mostly Cloudy"
+
+
+# ---------------------------------------------------------------------------
+# "and Gusty" qualifier tests (ADR-044 §4)
+# ---------------------------------------------------------------------------
+# Thresholds: windGust ≥ windSpeed + 12 mph  AND  windGust ≥ 18 mph.
+# Both speed values are converted to mph before the check regardless of the
+# declared source unit, so non-mph stations stay correct.
+# The qualifier only fires when Beaufort > 0 — Calm wind is already suppressed
+# from the text, so "and Gusty" has no label to attach to when windSpeed is Calm
+# (this is a conscious design choice, not an oversight: see conditions_text.py §3).
+# ---------------------------------------------------------------------------
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_above_both_thresholds(mock_classify, mock_daytime) -> None:
+    """windSpeed=5 mph, windGust=20 mph: spread=15 >= 12 AND gust=20 >= 18 fires.
+
+    5 mph = 2.24 m/s -> Beaufort 2 "Light breeze".
+    Expected label: "Light breeze and Gusty".
+    """
+    result = build_weather_text(
+        wind_speed=5.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=20.0,
+        wind_gust_unit="mile_per_hour",
+    )
+    assert "and Gusty" in result, f"Expected 'and Gusty' in {result!r}"
+    assert "Light breeze" in result
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_exact_boundary_both_thresholds(mock_classify, mock_daytime) -> None:
+    """windSpeed=6 mph, windGust=18 mph: spread=12 exactly AND gust=18 exactly fires.
+
+    Both thresholds are >= (not >), so the exact boundary must fire.
+    6 mph = 2.68 m/s -> Beaufort 2 "Light breeze".
+    """
+    result = build_weather_text(
+        wind_speed=6.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=18.0,
+        wind_gust_unit="mile_per_hour",
+    )
+    assert "and Gusty" in result, f"Expected 'and Gusty' at exact boundary, got {result!r}"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_spread_just_below_does_not_fire(mock_classify, mock_daytime) -> None:
+    """windSpeed=7 mph, windGust=18 mph: spread=11 < 12 does NOT fire.
+
+    Gust meets the 18 mph floor but spread is below 12 mph — qualifier suppressed.
+    """
+    result = build_weather_text(
+        wind_speed=7.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=18.0,
+        wind_gust_unit="mile_per_hour",
+    )
+    assert "and Gusty" not in result, f"Expected no 'and Gusty', got {result!r}"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_gust_below_18_floor_does_not_fire(mock_classify, mock_daytime) -> None:
+    """windSpeed=4 mph, windGust=16 mph: spread=12 >= 12 but gust=16 < 18 does NOT fire.
+
+    Spread threshold met but gust is below the 18 mph absolute floor — suppressed.
+    """
+    result = build_weather_text(
+        wind_speed=4.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=16.0,
+        wind_gust_unit="mile_per_hour",
+    )
+    assert "and Gusty" not in result, (
+        f"Expected no 'and Gusty' when gust < 18 mph floor, got {result!r}"
+    )
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_non_mph_station_knots(mock_classify, mock_daytime) -> None:
+    """Non-mph station: both wind_speed and wind_gust in knots — thresholds still in mph.
+
+    windSpeed = 4.35 knots ~ 5.006 mph  (via convert("knot","mile_per_hour"))
+    windGust  = 15.65 knots ~ 18.010 mph
+    spread ~ 13 mph >= 12, gust ~ 18 mph >= 18 -> fires.
+
+    Both wind_speed_unit AND wind_gust_unit are "knot" so the conversion path
+    exercises convert(value, "knot", "mile_per_hour") for both inputs (per lead note).
+    """
+    result = build_weather_text(
+        wind_speed=4.35,
+        wind_speed_unit="knot",
+        wind_gust=15.65,
+        wind_gust_unit="knot",
+    )
+    assert "and Gusty" in result, (
+        f"Expected 'and Gusty' for knot-unit station with equivalent mph values, got {result!r}"
+    )
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_calm_wind_suppressed_even_with_high_gust(mock_classify, mock_daytime) -> None:
+    """windSpeed=0 mph (Calm, Beaufort 0) + windGust=25 mph produces no wind text.
+
+    ADR-044 §4: Calm is suppressed from the text. The "and Gusty" qualifier
+    attaches to the Beaufort label, so it only fires inside the `if b["value"] > 0`
+    block. When sustained wind is Calm, the entire wind component is omitted —
+    "and Gusty" does not appear floating alone (conscious design choice).
+    """
+    result = build_weather_text(
+        sky="Clear",
+        wind_speed=0.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=25.0,
+        wind_gust_unit="mile_per_hour",
+    )
+    assert "and Gusty" not in result, (
+        f"Calm + high gust must NOT produce 'and Gusty': got {result!r}"
+    )
+    # Calm wind is omitted; only sky remains.
+    assert result == "Clear", f"Expected 'Clear' only, got {result!r}"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_no_gust_data_does_not_fire(mock_classify, mock_daytime) -> None:
+    """wind_gust=None (no gust sensor) -> qualifier suppressed, Beaufort label unchanged.
+
+    5 mph -> Beaufort 2 "Light breeze" with no gusty suffix.
+    """
+    result = build_weather_text(
+        wind_speed=5.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=None,
+    )
+    assert "and Gusty" not in result, f"Expected no 'and Gusty' when wind_gust=None, got {result!r}"
+    assert result == "Light breeze"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_gusty_full_composition_with_sky_and_rain(mock_classify, mock_daytime) -> None:
+    """Gusty qualifier composes correctly with sky and precipitation.
+
+    ADR-044 §9 example: "...Fresh Breeze and Gusty, with Heavy Rain"
+    windSpeed=23 mph = 10.28 m/s -> Beaufort 5 "Fresh breeze"
+    windGust=38 mph: spread=15 >= 12, gust >= 18 -> fires.
+    rain_rate=0.5 in/hr -> Heavy Rain.
+    """
+    result = build_weather_text(
+        sky="Mostly Cloudy",
+        wind_speed=23.0,
+        wind_speed_unit="mile_per_hour",
+        wind_gust=38.0,
+        wind_gust_unit="mile_per_hour",
+        rain_rate=0.5,
+        rain_rate_unit="inch_per_hour",
+    )
+    assert "Fresh breeze and Gusty" in result, (
+        f"Expected 'Fresh breeze and Gusty' in composed string, got {result!r}"
+    )
+    assert result == "Mostly Cloudy, Fresh breeze and Gusty, with Heavy Rain", (
+        f"Unexpected full composition: {result!r}"
+    )
