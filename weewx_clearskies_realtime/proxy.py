@@ -30,7 +30,11 @@ import httpx
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
-from weewx_clearskies_realtime.units.transformer import UnitTransformer
+from weewx_clearskies_realtime.units.transformer import (
+    _DEFAULT_ORDINATES,
+    _degrees_to_index,
+    UnitTransformer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +389,24 @@ def _flatten_converted_value(val: object) -> object:
         return raw_val
 
 
+def _cardinal_for_degrees(degrees: object) -> str | None:
+    """Return the canonical 16-point cardinal code for *degrees*, or None.
+
+    Uses the shared ``_degrees_to_index`` formula (same sector boundaries as
+    the transformer's ``_direction_label``).  Returns None when *degrees* is
+    not a finite number so that a null windDir produces null windDirCardinal.
+
+    The code is language-neutral (one of N, NNE, NE, ENE, E, ESE, SE, SSE,
+    S, SSW, SW, WSW, W, WNW, NW, NNW).  The dashboard localises it via
+    i18next (ADR-021) — the BFF never emits a translated string here.
+    """
+    try:
+        deg = float(degrees)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return _DEFAULT_ORDINATES[_degrees_to_index(deg)]
+
+
 def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, object] | list[object]:
     """Apply unit conversion to API response data.
 
@@ -450,6 +472,14 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
                     flattened[key] = val
                     continue
                 flattened[key] = _flatten_converted_value(val)
+            # Inject canonical 16-point cardinal codes alongside windDir /
+            # windGustDir so the dashboard can localise them via i18next
+            # (ADR-021) without recomputing the sector on the client side.
+            # null windDir → null windDirCardinal (not omitted).
+            flattened["windDirCardinal"] = _cardinal_for_degrees(flattened.get("windDir"))
+            flattened["windGustDirCardinal"] = _cardinal_for_degrees(
+                flattened.get("windGustDir")
+            )
             return {**data, "data": flattened}
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")

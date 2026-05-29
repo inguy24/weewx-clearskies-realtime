@@ -23,12 +23,33 @@ _METADATA_FIELDS: frozenset[str] = frozenset({"dateTime", "usUnits", "interval"}
 
 
 # Default 16-point compass ordinate labels (weewx default order).
+# These are the canonical language-neutral codes the dashboard localises via
+# i18next (ADR-021).  Operator [[ordinates]] overrides affect only the
+# display label (self._ordinates in UnitTransformer); they do NOT affect
+# windDirCardinal/windGustDirCardinal, which always index this constant list.
 _DEFAULT_ORDINATES: list[str] = [
     "N", "NNE", "NE", "ENE",
     "E", "ESE", "SE", "SSE",
     "S", "SSW", "SW", "WSW",
     "W", "WNW", "NW", "NNW",
 ]
+
+
+def _degrees_to_index(degrees: float) -> int:
+    """Convert compass degrees to a 0-based 16-sector index.
+
+    Divides the circle into 16 equal 22.5° sectors, offset by 11.25° so that
+    N spans 348.75°–11.25° (wrapping through 0°) rather than 0°–22.5°.
+
+    This is the single authoritative sector formula shared by
+    ``_direction_label`` (operator-overridable display labels) and the
+    ``windDirCardinal`` / ``windGustDirCardinal`` output fields (canonical
+    i18n codes always indexed against ``_DEFAULT_ORDINATES``).
+
+    Returns:
+        Integer in [0, 15].
+    """
+    return int((degrees + 11.25) / 22.5) % 16
 
 
 class UnitTransformer:
@@ -300,8 +321,11 @@ class UnitTransformer:
         }
 
     def _direction_label(self, degrees: float) -> str:
-        """Convert compass degrees to the appropriate ordinate label."""
-        # Divides the circle into 16 equal 22.5° sectors; offset by 11.25° so
-        # that N spans 348.75°–11.25° rather than 0°–22.5°.
-        idx = int((degrees + 11.25) / 22.5) % 16
-        return self._ordinates[idx]
+        """Convert compass degrees to the operator's ordinate label.
+
+        Uses the shared ``_degrees_to_index`` formula so the sector boundary
+        is identical to the canonical cardinal codes emitted by the BFF.
+        Indexes ``self._ordinates`` (operator-overridable) rather than
+        ``_DEFAULT_ORDINATES``, so operator [[ordinates]] config is honoured.
+        """
+        return self._ordinates[_degrees_to_index(degrees)]

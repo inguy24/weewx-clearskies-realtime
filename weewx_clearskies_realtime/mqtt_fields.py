@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from weewx_clearskies_realtime.units.transformer import UnitTransformer
 
 from weewx_clearskies_realtime.units.groups import get_source_unit
+from weewx_clearskies_realtime.units.transformer import _DEFAULT_ORDINATES, _degrees_to_index
 
 logger = logging.getLogger(__name__)
 
@@ -193,5 +194,23 @@ def convert_mqtt_packet(
                 }
 
     transformer.add_derived_fields(result)
+
+    # Inject canonical 16-point cardinal codes for the SSE live-update path.
+    # The dashboard localises these via i18next (ADR-021) rather than
+    # recomputing the sector client-side with a potentially different formula.
+    # null windDir → null windDirCardinal (field always present in packet).
+    for dir_field, cardinal_field in (
+        ("windDir", "windDirCardinal"),
+        ("windGustDir", "windGustDirCardinal"),
+    ):
+        entry = result.get(dir_field)
+        deg_val = entry.get("value") if isinstance(entry, dict) else None
+        if deg_val is not None:
+            try:
+                result[cardinal_field] = _DEFAULT_ORDINATES[_degrees_to_index(float(deg_val))]
+            except (TypeError, ValueError):
+                result[cardinal_field] = None
+        else:
+            result[cardinal_field] = None
 
     return result
