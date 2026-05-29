@@ -124,6 +124,24 @@ class ApiSettings:
 
 
 @dataclass
+class TrendSettings:
+    """Barometer-trend look-back window (ADR-042).
+
+    Mirrors weewx semantics:
+    * ``time_delta`` — how far back (in seconds) to look for the historical
+      barometer reading.  Default 10800 = 3 hours.
+    * ``time_grace`` — how close (in seconds) a past record must be to the
+      target time to be accepted.  Default 300 = 5 minutes.
+
+    Defaults reproduce the pre-configuration hardcoded behaviour exactly, so an
+    absent ``[[trend]]`` block is a no-op.
+    """
+
+    time_delta: int = 10800
+    time_grace: int = 300
+
+
+@dataclass
 class UnitSettings:
     # Maps group_name → target unit string (e.g. "group_temperature" → "degree_F").
     groups: dict[str, str] = field(default_factory=dict)
@@ -133,6 +151,8 @@ class UnitSettings:
     string_formats: dict[str, str] = field(default_factory=dict)
     # 16-point compass ordinate labels, N through NNW.
     ordinates: list[str] = field(default_factory=lambda: list(_DEFAULT_ORDINATES))
+    # Barometer-trend look-back window (ADR-042).
+    trend: TrendSettings = field(default_factory=TrendSettings)
 
 
 @dataclass
@@ -283,6 +303,7 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
     labels_raw = units_raw.get("labels", {})
     string_formats_raw = units_raw.get("string_formats", {})
     ordinates_raw = units_raw.get("ordinates", {})
+    trend_raw = units_raw.get("trend", {})
 
     # ConfigObj exposes [[groups]] as a dict-like subsection; convert to plain dict.
     groups: dict[str, str] = {str(k): str(v) for k, v in groups_raw.items()} if groups_raw else {}
@@ -309,11 +330,20 @@ def _parse(raw: Any) -> Settings:  # noqa: ANN401
                 len(parsed),
             )
 
+    # [[trend]] has integer-seconds keys time_delta / time_grace (ADR-042).
+    # Defaults reproduce the historical hardcoded window exactly so an absent
+    # block is a no-op.  Integer seconds only — no weewx duration notation.
+    trend = TrendSettings(
+        time_delta=int(trend_raw.get("time_delta", 10800)) if trend_raw else 10800,
+        time_grace=int(trend_raw.get("time_grace", 300)) if trend_raw else 300,
+    )
+
     s.units = UnitSettings(
         groups=groups,
         labels=labels,
         string_formats=string_formats,
         ordinates=ordinates,
+        trend=trend,
     )
 
     return s

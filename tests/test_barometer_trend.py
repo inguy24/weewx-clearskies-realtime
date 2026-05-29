@@ -636,3 +636,117 @@ def test_valid_pressure_units_constant() -> None:
 def test_direction_threshold_constant() -> None:
     """_DIRECTION_THRESHOLD_INHG must be exactly 0.01."""
     assert _DIRECTION_THRESHOLD_INHG == pytest.approx(0.01, abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# ADR-042: operator-configurable trend window — _get_trend_config() + wiring
+# ---------------------------------------------------------------------------
+# The module caches the resolved config in _trend_config_cache.  Reset it
+# around each test below so one test's load can't leak into another, and so
+# the default-window tests above keep falling back to the module constants
+# (no config file present in the test environment).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_trend_config_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the trend-config cache and any CLEARSKIES_CONFIG env var per test.
+
+    Without this, _get_trend_config() could cache a value from one test and
+    return it in another, and a stray config file pointed to by CLEARSKIES_CONFIG
+    would change the default-window arithmetic the existing AC tests rely on.
+    """
+    import weewx_clearskies_realtime.enrichment.barometer_trend as bt_mod
+
+    monkeypatch.delenv("CLEARSKIES_CONFIG", raising=False)
+    monkeypatch.setattr(bt_mod, "_trend_config_cache", None)
+
+
+def test_get_trend_config_falls_back_to_constants_without_config() -> None:
+    """No loadable config → _get_trend_config() returns the module constants."""
+    import weewx_clearskies_realtime.enrichment.barometer_trend as bt_mod
+
+    # load_settings() raises FileNotFoundError here (no config file / env var),
+    # so the helper must fall back to (TREND_TIME_DELTA, TREND_TIME_GRACE).
+    assert bt_mod._get_trend_config() == (TREND_TIME_DELTA, TREND_TIME_GRACE)
+
+
+def test_get_trend_config_reads_configured_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_get_trend_config() returns settings.units.trend when settings load."""
+    import weewx_clearskies_realtime.enrichment.barometer_trend as bt_mod
+    from weewx_clearskies_realtime.config.settings import (
+        Settings,
+        TrendSettings,
+        UnitSettings,
+    )
+
+    fake = Settings()
+    fake.units = UnitSettings(trend=TrendSettings(time_delta=3600, time_grace=120))
+    monkeypatch.setattr(
+        "weewx_clearskies_realtime.config.settings.load_settings",
+        lambda: fake,
+    )
+
+    assert bt_mod._get_trend_config() == (3600, 120)
+
+
+async def test_barometer_trend_uses_configured_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(c) The archive query window reflects the CONFIGURED time_delta/time_grace.
+
+    With time_delta=3600 and time_grace=120, the historical target is
+    _TS_CURRENT - 3600, and the from/to bounds are that target ±120 — proving
+    the enrichment reads the configured values rather than the 10800/300
+    constants.
+    """
+    import weewx_clearskies_realtime.enrichment.barometer_trend as bt_mod
+
+    cfg_delta, cfg_grace = 3600, 120
+    monkeypatch.setattr(bt_mod, "_get_trend_config", lambda: (cfg_delta, cfg_grace))
+
+    ts_historical = _TS_CURRENT - cfg_delta
+    data = _current_envelope(barometer=30.10)
+    # Archive record placed exactly at the configured historical target so it
+    # passes the (now-configured) grace check.
+    archive = _archive_response(barometer=30.05, date_time=ts_historical)
+    mock_client = _make_mock_client(archive)
+
+    with patch(
+        "weewx_clearskies_realtime.proxy.get_upstream_client",
+        return_value=(mock_client, _UPSTREAM_URL),
+    ):
+        result = await enrich_barometer_trend(data)
+
+    params = mock_client.get.call_args.kwargs["params"]
+    assert params["from"] == _epoch_to_iso(ts_historical - cfg_grace)
+    assert params["to"] == _epoch_to_iso(ts_historical + cfg_grace)
+    # Trend still computed correctly with the configured window.
+    assert result["barometerTrend"] == pytest.approx(0.05, abs=1e-9)
+
+
+async def test_barometer_trend_configured_grace_rejects_outside_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(c) The grace-window rejection uses the CONFIGURED time_grace.
+
+    A record 121 s from the target is OUTSIDE a configured grace of 120 s
+    (it would be INSIDE the default 300 s grace) → barometerTrend must be None,
+    proving the grace check honours config.
+    """
+    import weewx_clearskies_realtime.enrichment.barometer_trend as bt_mod
+
+    cfg_delta, cfg_grace = 3600, 120
+    monkeypatch.setattr(bt_mod, "_get_trend_config", lambda: (cfg_delta, cfg_grace))
+
+    ts_historical = _TS_CURRENT - cfg_delta
+    outside_ts = ts_historical + cfg_grace + 1  # 121 s away — outside configured grace
+    data = _current_envelope(barometer=30.10)
+    archive = _archive_response(barometer=30.05, date_time=outside_ts)
+    mock_client = _make_mock_client(archive)
+
+    with patch(
+        "weewx_clearskies_realtime.proxy.get_upstream_client",
+        return_value=(mock_client, _UPSTREAM_URL),
+    ):
+        result = await enrich_barometer_trend(data)
+
+    assert result["barometerTrend"] is None

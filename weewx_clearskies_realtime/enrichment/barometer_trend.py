@@ -62,11 +62,48 @@ _VALID_PRESSURE_UNITS: frozenset[str] = frozenset({"inHg", "mbar", "hPa", "kPa"}
 _DIRECTION_THRESHOLD_INHG: float = 0.01
 
 # How far back (in seconds) to look for the historical barometer reading.
+# Fallback default when no [[trend]] config is available.
 TREND_TIME_DELTA: int = 10800  # 3 hours
 
 # Grace period: accept a record within ±TREND_TIME_GRACE seconds of the target
 # timestamp, and bound the archive query to that same window.
+# Fallback default when no [[trend]] config is available.
 TREND_TIME_GRACE: int = 300  # 5 minutes
+
+# Cache the resolved (time_delta, time_grace) so we don't re-read the config
+# file on every /current request.  Populated on first successful load; stays
+# None (→ constant fallback used) if settings can't be loaded.
+_trend_config_cache: tuple[int, int] | None = None
+
+
+def _get_trend_config() -> tuple[int, int]:
+    """Return the operator-configured ``(time_delta, time_grace)`` for the trend window.
+
+    Reads ``settings.units.trend`` via the project's ``load_settings()`` loader,
+    caching the result so the config file is read at most once.  Falls back to
+    the module constants ``TREND_TIME_DELTA`` / ``TREND_TIME_GRACE`` (10800/300)
+    whenever settings cannot be loaded (e.g. no config file present) or the
+    ``[[trend]]`` block is absent — so an unconfigured station behaves exactly
+    as before.  Never raises.
+
+    Mirrors the defensive lazy-import + try/except pattern used by
+    ``_resolve_pressure_unit()`` so this enrichment never breaks GET /current.
+    """
+    global _trend_config_cache  # noqa: PLW0603
+    if _trend_config_cache is not None:
+        return _trend_config_cache
+
+    try:
+        from weewx_clearskies_realtime.config.settings import load_settings
+
+        trend = load_settings().units.trend
+        _trend_config_cache = (int(trend.time_delta), int(trend.time_grace))
+        return _trend_config_cache
+    except Exception:  # noqa: BLE001
+        # No config file, parse error, or any other failure → constant fallback.
+        # Do not cache the fallback: a config file may appear later, and the
+        # constants are cheap to return.
+        return TREND_TIME_DELTA, TREND_TIME_GRACE
 
 
 def _resolve_pressure_unit(data: dict[str, Any]) -> str | None:
@@ -177,7 +214,11 @@ async def enrich_barometer_trend(data: dict[str, Any]) -> dict[str, Any]:
         data["barometerTrendDirection"] = None
         return data
 
-    ts_historical = ts_current - TREND_TIME_DELTA
+    # Operator-configurable look-back window (ADR-042).  Falls back to the
+    # module constants (10800 / 300) when no [[trend]] config is present.
+    time_delta, time_grace = _get_trend_config()
+
+    ts_historical = ts_current - time_delta
 
     try:
         from weewx_clearskies_realtime.proxy import get_upstream_client
@@ -195,8 +236,8 @@ async def enrich_barometer_trend(data: dict[str, Any]) -> dict[str, Any]:
         resp = await client.get(
             url,
             params={
-                "from": _epoch_to_iso(ts_historical - TREND_TIME_GRACE),
-                "to": _epoch_to_iso(ts_historical + TREND_TIME_GRACE),
+                "from": _epoch_to_iso(ts_historical - time_grace),
+                "to": _epoch_to_iso(ts_historical + time_grace),
                 "limit": 1,
                 "fields": "barometer,timestamp",
             },
@@ -258,7 +299,7 @@ async def enrich_barometer_trend(data: dict[str, Any]) -> dict[str, Any]:
     if historical_ts_raw is not None:
         try:
             historical_ts = _iso_to_epoch(str(historical_ts_raw))
-            if abs(historical_ts - ts_historical) > TREND_TIME_GRACE:
+            if abs(historical_ts - ts_historical) > time_grace:
                 data["barometerTrend"] = None
                 data["barometerTrendDirection"] = None
                 return data

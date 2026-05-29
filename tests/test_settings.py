@@ -118,6 +118,72 @@ def test_parse_default_mode_is_direct() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ADR-042: [[trend]] barometer-trend window config
+# ---------------------------------------------------------------------------
+
+
+def test_parse_trend_defaults_when_block_absent() -> None:
+    """(b) No [[trend]] block → defaults 10800 / 300 (today's behaviour exactly)."""
+    s = _parse({})
+    assert s.units.trend.time_delta == 10800
+    assert s.units.trend.time_grace == 300
+
+
+def test_parse_trend_defaults_when_units_present_but_trend_absent() -> None:
+    """A [units] block without [[trend]] still yields the default window."""
+    s = _parse({"units": {"groups": {"group_temperature": "degree_F"}}})
+    assert s.units.trend.time_delta == 10800
+    assert s.units.trend.time_grace == 300
+
+
+def test_parse_trend_custom_time_delta_and_grace() -> None:
+    """(a) [[trend]] parses time_delta / time_grace as integer seconds."""
+    raw = {"units": {"trend": {"time_delta": "3600", "time_grace": "120"}}}
+    s = _parse(raw)
+    assert s.units.trend.time_delta == 3600
+    assert s.units.trend.time_grace == 120
+    assert isinstance(s.units.trend.time_delta, int)
+    assert isinstance(s.units.trend.time_grace, int)
+
+
+def test_parse_trend_partial_block_fills_missing_with_defaults() -> None:
+    """Only time_delta set → time_grace falls back to its default 300."""
+    raw = {"units": {"trend": {"time_delta": "7200"}}}
+    s = _parse(raw)
+    assert s.units.trend.time_delta == 7200
+    assert s.units.trend.time_grace == 300
+
+
+def test_parse_trend_from_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """End-to-end: [[trend]] under [units] in a real config file is parsed."""
+    conf = tmp_path / "realtime.conf"
+    conf.write_text(
+        textwrap.dedent("""
+            [input]
+            mode = direct
+
+            [sse]
+            bind_port = 8766
+
+            [health]
+            bind_port = 8082
+
+            [logging]
+            level = INFO
+
+            [units]
+            [[trend]]
+            time_delta = 5400
+            time_grace = 200
+        """)
+    )
+    monkeypatch.setenv("CLEARSKIES_CONFIG", str(conf))
+    s = load_settings()
+    assert s.units.trend.time_delta == 5400
+    assert s.units.trend.time_grace == 200
+
+
+# ---------------------------------------------------------------------------
 # New: DirectSettings default socket_path
 # ---------------------------------------------------------------------------
 
