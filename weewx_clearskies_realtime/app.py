@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse  # type: ignore[import-untyped]
 
 from weewx_clearskies_realtime.config.settings import Settings
+from weewx_clearskies_realtime.enrichment.scene_packet_tap import inject_scene_into_packet
 from weewx_clearskies_realtime.logging.redaction_filter import request_id_var
 from weewx_clearskies_realtime.mqtt_fields import convert_mqtt_packet
 from weewx_clearskies_realtime.proxy import close as close_proxy
@@ -150,6 +151,14 @@ def create_app(
                                 "MQTT packet conversion failed — emitting raw",
                                 exc_info=True,
                             )
+
+                    # Inject scene descriptor (ADR-047) after any unit conversion
+                    # so the structured {sky, daytime, overlay} dict is not
+                    # corrupted by convert_mqtt_packet's float-parse passthrough.
+                    try:
+                        inject_scene_into_packet(packet)
+                    except Exception:
+                        logger.warning("scene injection into SSE packet failed", exc_info=True)
 
                     yield {"event": "loop", "data": json.dumps(packet, default=str)}
             except asyncio.CancelledError:

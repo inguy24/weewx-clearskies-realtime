@@ -287,6 +287,17 @@ def main() -> None:
     from weewx_clearskies_realtime.enrichment.uv_smoother import enrich_uv
     register_enrichment("current", enrich_uv)
 
+    # Register scene enrichment for GET /api/v1/current (ADR-047).
+    # Injects scene = {sky, daytime, overlay} derived from provider conditions,
+    # almanac sunrise/sunset, and the 15-minute precip-linger timer.
+    from weewx_clearskies_realtime.enrichment.scene_enrichment import enrich_scene
+    register_enrichment("current", enrich_scene)
+
+    # NOTE: The scene field is injected into SSE loop packets in app.py's SSE
+    # generator (after unit conversion) rather than via a packet-tap processor.
+    # This ensures the structured {sky, daytime, overlay} dict is never corrupted
+    # by convert_mqtt_packet's float-parse passthrough for unknown fields.
+
     logger.info("Starting weewx-clearskies-realtime", extra=log_extra)
 
     # Step 6: run.
