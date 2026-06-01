@@ -274,10 +274,23 @@ def main() -> None:
     from weewx_clearskies_realtime.enrichment.sky_tap import update_from_packet as sky_tap
     register_processor(sky_tap)
 
+    # Register wind rolling-window processor and enrichment (T3a.1–T3a.2).
+    # process_packet feeds the 10-minute time-windowed buffers on every loop
+    # packet; enrich_wind_rolling_average injects windSpeedAvg10m /
+    # windGustMax10m into GET /api/v1/current once min coverage is reached.
+    from weewx_clearskies_realtime.enrichment.wind_rolling_window import (
+        enrich_wind_rolling_average,
+    )
+    from weewx_clearskies_realtime.enrichment.wind_rolling_window import (
+        process_packet as wind_process_packet,
+    )
+    register_processor(wind_process_packet)
+
     # Register barometer trend enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
     from weewx_clearskies_realtime.proxy import register_enrichment
     register_enrichment("current", enrich_barometer_trend)
+    register_enrichment("current", enrich_wind_rolling_average)
 
     # Register weather text enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.weather_text import enrich_weather_text

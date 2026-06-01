@@ -251,6 +251,41 @@ class UnitTransformer:
             "formatted": "",
         }
 
+        # --- 10-minute rolling wind average and max-gust (T3a.3) ---
+        # Lazy import avoids a circular dependency (transformer ↔ enrichment).
+        # Fields are omitted entirely before MIN_COVERAGE_SECONDS of data has
+        # accumulated (get_wind_avg / get_gust_max return None); never inject null.
+        from ..enrichment.wind_rolling_window import (  # noqa: I001
+            get_gust_max as _get_gust_max,
+            get_wind_avg as _get_wind_avg,
+        )
+        from .labels import format_value as _fmt, get_label as _lbl
+
+        target_speed = self._targets.get("group_speed")
+        disp_unit = target_speed or "mile_per_hour"
+
+        avg = _get_wind_avg()
+        if avg is not None:
+            try:  # noqa: SIM105
+                record["windSpeedAvg10m"] = {
+                    "value": avg,
+                    "label": _lbl(disp_unit, self._label_overrides),
+                    "formatted": _fmt(avg, disp_unit, self._format_overrides),
+                }
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        gust = _get_gust_max()
+        if gust is not None:
+            try:  # noqa: SIM105
+                record["windGustMax10m"] = {
+                    "value": gust,
+                    "label": _lbl(disp_unit, self._label_overrides),
+                    "formatted": _fmt(gust, disp_unit, self._format_overrides),
+                }
+            except Exception:  # noqa: BLE001, S110
+                pass
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
