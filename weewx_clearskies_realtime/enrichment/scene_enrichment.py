@@ -100,6 +100,7 @@ async def enrich_scene(data: dict[str, Any]) -> dict[str, Any]:
         descriptor = dict(_FALLBACK_SCENE)
 
     obs["scene"] = descriptor
+    data["scene"] = descriptor
     return data
 
 
@@ -159,14 +160,15 @@ async def _fetch_current_precip_type() -> str | None:
             return None
 
         url = f"{upstream_url}{_FORECAST_PATH}"
-        resp = await client.get(url, params={"interval": "hourly", "limit": 1})
+        resp = await client.get(url, params={"hours": 1, "days": 0})
         if resp.status_code >= 400:  # noqa: PLR2004
             logger.debug("forecast fetch returned %d — precipType unavailable", resp.status_code)
             return None
 
         forecast_json = resp.json()
-        # ForecastBundle envelope: {hourly: [...], daily: [...], source: ..., generatedAt: ...}
-        hourly = forecast_json.get("hourly", [])
+        # ForecastBundle envelope: {data: {hourly: [...], daily: [...]}, source: ..., generatedAt: ...}
+        bundle = forecast_json.get("data", forecast_json)
+        hourly = bundle.get("hourly", [])
         if not hourly or not isinstance(hourly, list):
             return None
 
