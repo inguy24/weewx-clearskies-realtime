@@ -286,11 +286,25 @@ def main() -> None:
     )
     register_processor(wind_process_packet)
 
+    # Register lightning strike buffer processor and enrichment (T2a.1–T2a.2).
+    # process_packet detects strike-count increments from loop packets and
+    # records (timestamp, distance) in the 24-hour rolling buffer;
+    # enrich_lightning_history injects lightningStrikeHistory: [...] into
+    # GET /api/v1/current (empty list is a valid "no activity" state).
+    from weewx_clearskies_realtime.enrichment.lightning_strike_buffer import (
+        enrich_lightning_history,
+    )
+    from weewx_clearskies_realtime.enrichment.lightning_strike_buffer import (
+        process_packet as lightning_process_packet,
+    )
+    register_processor(lightning_process_packet)
+
     # Register barometer trend enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.barometer_trend import enrich_barometer_trend
     from weewx_clearskies_realtime.proxy import register_enrichment
     register_enrichment("current", enrich_barometer_trend)
     register_enrichment("current", enrich_wind_rolling_average)
+    register_enrichment("current", enrich_lightning_history)
 
     # Register weather text enrichment for GET /api/v1/current.
     from weewx_clearskies_realtime.enrichment.weather_text import enrich_weather_text

@@ -286,6 +286,19 @@ class UnitTransformer:
             except Exception:  # noqa: BLE001, S110
                 pass
 
+        # --- Lightning strike history (T2a.3) ---
+        # Distance values pass through in the station's configured unit — no
+        # unit conversion needed here.  The field is always set (empty list
+        # when no strikes in the 24-hour window) so the dashboard can clear
+        # a previously displayed strike overlay on quiet periods.
+        try:
+            from ..enrichment.lightning_strike_buffer import (
+                get_strike_history as _get_strikes,
+            )
+            record["lightningStrikeHistory"] = _get_strikes()
+        except Exception:  # noqa: BLE001, S110
+            pass
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
