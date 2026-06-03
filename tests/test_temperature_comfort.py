@@ -61,13 +61,14 @@ def test_classify_chilly_and_oppressive() -> None:
 
 
 def test_classify_near_saturation_foggy_override() -> None:
-    """AC 5.7 — Near-saturation: depression=2°F (≤5°F) overrides moisture → 'Pleasant and Foggy'.
+    """AC 5.7 — Near-saturation: depression=2°F uses normal humidity label (fog removed from comfort).
 
-    dewpoint depression = out_temp - dewpoint = 70 - 68 = 2°F ≤ 5°F threshold.
+    Fog detection moved to sky classification path. Comfort module only describes feel.
+    dewpoint=68 → 'Very Humid' tier.
     """
     temperature_comfort.reset()
     result = temperature_comfort.classify(app_temp=70.0, dewpoint=68.0, out_temp=70.0)
-    assert result == "Pleasant and Foggy"
+    assert result == "Pleasant and Very Humid"
 
 
 def test_classify_cold_suppresses_moisture() -> None:
@@ -89,13 +90,13 @@ def test_classify_very_cold() -> None:
 
 
 def test_classify_near_saturation_in_cold() -> None:
-    """AC 5.10 — Near-saturation allowed in Cold tier: depression=2°F (≤5°F) → 'Cold and Foggy'.
+    """AC 5.10 — Cold tier suppresses moisture (including near-saturation). Fog moved to sky path.
 
-    Foggy override applies even when moisture modifier would otherwise be suppressed.
+    Cold tier (≤32°F) suppresses all moisture modifiers. No fog from comfort module.
     """
     temperature_comfort.reset()
     result = temperature_comfort.classify(app_temp=25.0, dewpoint=23.0, out_temp=25.0)
-    assert result == "Cold and Foggy"
+    assert result == "Cold"
 
 
 def test_classify_bitter_cold() -> None:
@@ -166,10 +167,10 @@ def test_classify_dangerously_hot() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_classify_danger_cold_and_foggy() -> None:
-    """Extra — Danger label + near-saturation: 'Dangerous Cold and Foggy'.
+def test_classify_danger_cold_no_fog() -> None:
+    """Extra — Danger label without fog (fog moved to sky path).
 
-    Windchill=-30 triggers 'Dangerous Cold'; depression=2°F adds 'and Foggy'.
+    Windchill=-30 triggers 'Dangerous Cold'. No fog from comfort module.
     """
     temperature_comfort.reset()
     result = temperature_comfort.classify(
@@ -178,7 +179,7 @@ def test_classify_danger_cold_and_foggy() -> None:
         out_temp=-5.0,
         windchill=-30.0,
     )
-    assert result == "Dangerous Cold and Foggy"
+    assert result == "Dangerous Cold"
 
 
 def test_classify_hot_and_miserable() -> None:
@@ -242,14 +243,14 @@ def test_classify_wind_chill_at_exact_extreme_danger_threshold() -> None:
     assert result == "Extreme Danger Cold"
 
 
-def test_classify_saturation_depression_exactly_at_threshold() -> None:
-    """Near-saturation at exactly 5°F depression → 'Pleasant and Foggy'.
+def test_classify_saturation_depression_5f_uses_humidity() -> None:
+    """5°F depression uses normal humidity label (fog removed from comfort module).
 
-    The threshold is depression ≤ 5.0°F, so 5.0 should trigger foggy.
+    dewpoint=65 → 'Very Humid' tier. No fog at 5°F depression.
     """
     temperature_comfort.reset()
     result = temperature_comfort.classify(app_temp=70.0, dewpoint=65.0, out_temp=70.0)
-    assert result == "Pleasant and Foggy"
+    assert result == "Pleasant and Very Humid"
 
 
 def test_classify_saturation_depression_just_above_threshold() -> None:

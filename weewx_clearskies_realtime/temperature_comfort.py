@@ -78,9 +78,6 @@ _HI_DANGER: float = 104.0           # °F — Heat Index
 _WC_EXTREME_DANGER: float = -45.0   # °F — Wind Chill
 _WC_DANGER: float = -25.0           # °F — Wind Chill
 
-# Dewpoint depression (outTemp − dewpoint) at or below which we append "and Foggy"
-_SATURATION_DEPRESSION: float = 5.0  # °F
-
 # ---------------------------------------------------------------------------
 # Module-level hysteresis + hold state
 # ---------------------------------------------------------------------------
@@ -286,6 +283,10 @@ def classify(
         is_cold = new_temp_tier < _COLD_TIER_COUNT
         if is_cold or dewpoint is None or new_moisture_tier is None:
             base = t_label
+        elif out_temp is not None and round(out_temp - dewpoint, 1) <= 0.0:
+            # Full saturation: outTemp at or below dewpoint — air cannot hold
+            # more water vapour.  Overrides all moisture tier labels.
+            base = f"{t_label} and Fully Saturated"
         else:
             modifier = _moisture_modifier(new_moisture_tier)
             if modifier:
@@ -294,23 +295,7 @@ def classify(
                 base = t_label
 
     # ------------------------------------------------------------------
-    # Step 5: Near-saturation override — append "and Foggy"
-    # Replaces moisture modifier when both outTemp and dewpoint are present.
-    # "and Foggy" appends after any label including danger labels.
-    # ------------------------------------------------------------------
-    if out_temp is not None and dewpoint is not None:
-        depression = out_temp - dewpoint
-        if depression <= _SATURATION_DEPRESSION:
-            # Strip any existing moisture modifier before appending "and Foggy"
-            # so we never get "Warm and Humid and Foggy".
-            if " and " in base and not base.endswith("Heat") and not base.endswith("Cold"):
-                # base has a moisture modifier — replace it.
-                base = base.split(" and ")[0] + " and Foggy"
-            else:
-                base = base + " and Foggy"
-
-    # ------------------------------------------------------------------
-    # Step 6: Hold-time cache
+    # Step 5: Hold-time cache
     # If a cached result exists and its hold period hasn't expired, return
     # the cached value when the new result would differ.
     # ------------------------------------------------------------------
@@ -322,7 +307,7 @@ def classify(
         return _cached_result
 
     # ------------------------------------------------------------------
-    # Step 7: Update module state and cache
+    # Step 6: Update module state and cache
     # ------------------------------------------------------------------
     _current_temp_tier = new_temp_tier
     if new_moisture_tier is not None:
