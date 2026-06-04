@@ -287,3 +287,22 @@ def reset() -> None:
 def get_sun_times_date() -> str | None:
     """Return the date string of the currently cached sun times, or None."""
     return _sun_times_date
+
+
+def sun_times_need_refresh() -> bool:
+    """Return True when the cached sun times should be refreshed.
+
+    Refresh is needed when:
+    - No times are cached yet (startup), OR
+    - The current time is past the cached SUNRISE by more than 24 hours,
+      meaning we've gone through a full day cycle and need the next day's times.
+
+    NOT triggered by UTC date rollover (which can occur hours before local
+    sunset, e.g. midnight UTC = 5 PM PDT but sunset is 8 PM PDT) and NOT
+    triggered immediately at sunset (which would fetch the next day's sunrise,
+    making _compute_daytime() think it's daytime again during the evening).
+    """
+    if _sunrise_epoch is None or _sunset_epoch is None:
+        return True
+    now = time.time()
+    return now > _sunrise_epoch + 86400

@@ -112,14 +112,16 @@ async def enrich_scene(data: dict[str, Any]) -> dict[str, Any]:
 async def _update_sun_times() -> None:
     """Fetch today's almanac sunrise/sunset and cache them in scene module.
 
-    Re-fetches only when the cached date differs from today's UTC date (once
-    per calendar day).  Never raises — daytime falls back to False if the
-    almanac is unavailable.
+    Re-fetches only when the cached sunset has passed — NOT on UTC date
+    rollover.  A UTC date rollover can occur hours before the local sunset
+    (e.g. midnight UTC = 5 PM PDT, but sunset is 8 PM PDT).  Using the
+    sunset as the invalidation signal ensures daytime stays True until the
+    actual sunset.
     """
+    if not scene_mod.sun_times_need_refresh():
+        return  # Cached times still valid (sunset hasn't passed yet)
+
     today_utc = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-    cached_date = scene_mod.get_sun_times_date()
-    if cached_date == today_utc:
-        return  # Already up to date
 
     try:
         from weewx_clearskies_realtime.proxy import get_upstream_client
