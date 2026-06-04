@@ -119,9 +119,7 @@ async def _update_sun_times() -> None:
     actual sunset.
     """
     if not scene_mod.sun_times_need_refresh():
-        return  # Cached times still valid (sunset hasn't passed yet)
-
-    today_utc = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        return  # Cached times still valid
 
     try:
         from weewx_clearskies_realtime.proxy import get_upstream_client
@@ -131,19 +129,41 @@ async def _update_sun_times() -> None:
             return
 
         url = f"{upstream_url}{_ALMANAC_PATH}"
-        resp = await client.get(url, params={"date": today_utc})
-        if resp.status_code >= 400:  # noqa: PLR2004
-            logger.debug("almanac fetch returned %d — daytime unavailable", resp.status_code)
+        now_utc = datetime.now(tz=UTC)
+        today_str = now_utc.strftime("%Y-%m-%d")
+
+        rise, sset = await _fetch_sun_times(client, url, today_str)
+        if rise is None or sset is None:
             return
 
-        almanac_json = resp.json()
-        sun_block = almanac_json.get("data", {}).get("sun", {})
-        rise = sun_block.get("rise")
-        sset = sun_block.get("set")
+        # If today's sunrise is still in the future, we're in the pre-sunrise
+        # hours of the UTC day — but it may still be yesterday's evening locally.
+        # Fetch yesterday's almanac and use those times instead.
+        rise_dt = datetime.fromisoformat(rise.replace("Z", "+00:00"))
+        if rise_dt > now_utc:
+            from datetime import timedelta
+            yesterday_str = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
+            yrise, ysset = await _fetch_sun_times(client, url, yesterday_str)
+            if yrise is not None and ysset is not None:
+                rise, sset = yrise, ysset
+
         scene_mod.update_sun_times(rise, sset)
 
     except Exception:  # noqa: BLE001
         logger.debug("almanac fetch failed — daytime unavailable", exc_info=True)
+
+
+async def _fetch_sun_times(
+    client: Any, url: str, date_str: str
+) -> tuple[str | None, str | None]:
+    """Fetch sunrise/sunset for a given date from the upstream almanac API."""
+    resp = await client.get(url, params={"date": date_str})
+    if resp.status_code >= 400:  # noqa: PLR2004
+        logger.debug("almanac fetch for %s returned %d", date_str, resp.status_code)
+        return None, None
+    almanac_json = resp.json()
+    sun_block = almanac_json.get("data", {}).get("sun", {})
+    return sun_block.get("rise"), sun_block.get("set")
 
 
 async def _fetch_current_precip_type() -> str | None:
