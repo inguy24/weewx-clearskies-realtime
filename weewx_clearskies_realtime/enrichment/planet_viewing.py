@@ -444,7 +444,7 @@ async def enrich_planet_viewing(data: dict[str, Any]) -> dict[str, Any]:
                     moon_ra = _to_float(moon_block.get("rightAscension"))
                     moon_dec = _to_float(moon_block.get("declination"))
                     moon_illumination = _to_float(
-                        moon_block.get("illumination") or moon_block.get("illuminatedFraction")
+                        moon_block.get("illuminationPercent")
                     )
 
                 sun_block = almanac_data.get("sun", {})
