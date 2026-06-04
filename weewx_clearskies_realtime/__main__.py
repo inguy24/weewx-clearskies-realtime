@@ -320,6 +320,12 @@ def main() -> None:
     from weewx_clearskies_realtime.enrichment.scene_enrichment import enrich_scene
     register_enrichment("current", enrich_scene)
 
+    # Register planet viewing quality enrichment for GET /api/v1/almanac/planets.
+    # Injects per-planet viewingQuality/viewingScore/bestViewingTime/clearWindow/
+    # conjunction/viewingNote from 7Timer seeing forecast and almanac moon data.
+    from weewx_clearskies_realtime.enrichment.planet_viewing import enrich_planet_viewing
+    register_enrichment("almanac/planets", enrich_planet_viewing)
+
     # NOTE: The scene field is injected into SSE loop packets in app.py's SSE
     # generator (after unit conversion) rather than via a packet-tap processor.
     # This ensures the structured {sky, daytime, overlay} dict is never corrupted

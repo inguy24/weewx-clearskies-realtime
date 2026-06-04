@@ -124,15 +124,21 @@ async def _run_enrichments(
         or not isinstance(data, dict)
     ):
         return data
-    endpoint_key = path.split("/")[0] if path else ""
-    for fn in _enrichment_registry.get(endpoint_key):
+    # Try full path first (e.g. "almanac/planets"), then first segment (e.g. "almanac").
+    # This allows compound-key enrichments that target a sub-resource without
+    # matching every endpoint sharing that prefix.
+    fns = _enrichment_registry.get(path) if path else []
+    if not fns:
+        endpoint_key = path.split("/")[0] if path else ""
+        fns = _enrichment_registry.get(endpoint_key)
+    for fn in fns:
         try:
             result = fn(data)
             if inspect.isawaitable(result):
                 result = await result
             data = result
         except Exception:  # noqa: BLE001
-            logger.exception("Enrichment failed for endpoint %s", endpoint_key)
+            logger.exception("Enrichment failed for endpoint %s", path)
     return data
 
 
