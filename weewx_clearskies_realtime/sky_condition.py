@@ -35,9 +35,13 @@ _MIN_SOLAR_RAD: float = 50.0
 # Pyranometer noise floor (W/m²). Below this, treat as zero.
 _NOISE_FLOOR: float = 0.0
 
-# kc classification thresholds (ADR-044 table).
-_KC_CLEAR_THRESHOLD: float = 0.85
-_KC_OVERCAST_THRESHOLD: float = 0.40
+# kc classification thresholds (ADR-044 amended sigma-first table).
+# Low sigma branch (uniform sky):
+_KC_CLEAR_THRESHOLD: float = 0.85        # sigma < 0.10 and mean >= 0.85 → Clear
+_KC_HEAVY_OVERCAST_THRESHOLD: float = 0.30  # sigma < 0.10 and mean < 0.30 → Heavily Overcast
+# High sigma branch (broken/variable sky):
+_KC_MOSTLY_CLEAR_THRESHOLD: float = 0.70  # sigma >= 0.10 and mean >= 0.70 → Mostly Clear
+_KC_MOSTLY_CLOUDY_THRESHOLD: float = 0.40  # sigma >= 0.10 and mean < 0.40 → Mostly Cloudy
 _SIGMA_HIGH_THRESHOLD: float = 0.10
 
 # Maximum kc (cloud-edge enhancement above clear-sky; Tapakis & Charalambides 2014).
@@ -114,12 +118,14 @@ def update(
 def classify() -> str | None:
     """Classify sky condition from the rolling buffer.
 
-    Uses 2D classification on mean(kc) and sigma(kc) per ADR-044 table.
+    Uses sigma-first classification per ADR-044 amended table. Sigma (temporal
+    variability) is the primary axis because a flat kc curve below clear-sky
+    means uniform cloud cover regardless of how much light penetrates.
 
     Returns:
         One of: "Clear", "Mostly Clear", "Partly Cloudy", "Mostly Cloudy",
-        "Overcast", or None when the buffer has fewer than _MIN_SAMPLES entries
-        (startup or extended night period).
+        "Overcast", "Heavily Overcast", or None when the buffer has fewer
+        than _MIN_SAMPLES entries (startup or extended night period).
     """
     if len(_buffer) < _MIN_SAMPLES:
         return None
@@ -130,24 +136,22 @@ def classify() -> str | None:
     variance = sum((v - mean_kc) ** 2 for v in values) / n
     sigma_kc = math.sqrt(variance)
 
-    # ADR-044 two-dimensional classification table.
-    if mean_kc >= _KC_CLEAR_THRESHOLD:
-        # High mean — clear or mostly-clear.
-        if sigma_kc >= _SIGMA_HIGH_THRESHOLD:
-            # High variability: cloud-edge events indicate nearby clouds.
+    # Sigma-first classification (ADR-044 amended table).
+    # Low sigma = uniform sky. High sigma = broken clouds.
+    if sigma_kc < _SIGMA_HIGH_THRESHOLD:
+        # Uniform sky — curve shape is flat.
+        if mean_kc >= _KC_CLEAR_THRESHOLD:
+            return "Clear"
+        if mean_kc >= _KC_HEAVY_OVERCAST_THRESHOLD:
+            return "Overcast"
+        return "Heavily Overcast"
+    else:
+        # Variable sky — broken clouds, mean determines proportion.
+        if mean_kc >= _KC_MOSTLY_CLEAR_THRESHOLD:
             return "Mostly Clear"
-        return "Clear"
-
-    if mean_kc >= _KC_OVERCAST_THRESHOLD:
-        # Mid-range mean — partly or mostly cloudy.
-        if sigma_kc >= _SIGMA_HIGH_THRESHOLD:
-            # High variability: broken cumulus passing overhead.
+        if mean_kc >= _KC_MOSTLY_CLOUDY_THRESHOLD:
             return "Partly Cloudy"
-        # Low variability: uniform stratus.
         return "Mostly Cloudy"
-
-    # Low mean: overcast regardless of variability.
-    return "Overcast"
 
 
 def is_daytime() -> bool:

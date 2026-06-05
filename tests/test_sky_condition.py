@@ -47,9 +47,13 @@ def test_clear_sky() -> None:
 
 
 def test_overcast() -> None:
-    """All kc values near 0.2 (well below 0.40 threshold) → 'Overcast'."""
+    """kc = 0.50 with low sigma (uniform sky, 0.30–0.85 band) → 'Overcast'.
+
+    Under the sigma-first table (ADR-044 amended): sigma < 0.10 and
+    0.30 ≤ mean < 0.85 → 'Overcast'. kc=0.20 would now be 'Heavily Overcast'.
+    """
     sky_condition.reset()
-    _feed([0.20] * 40)
+    _feed([0.50] * 40)
     assert sky_condition.classify() == "Overcast"
 
 
@@ -64,9 +68,15 @@ def test_partly_cloudy() -> None:
 
 
 def test_mostly_cloudy() -> None:
-    """Steady kc at 0.60, low sigma → 'Mostly Cloudy'."""
+    """High sigma, mean kc < 0.40 (variable sky with low mean) → 'Mostly Cloudy'.
+
+    Under the sigma-first table (ADR-044 amended): sigma >= 0.10 and
+    mean < 0.40 → 'Mostly Cloudy'. Alternating 0.1/0.5 gives mean ≈ 0.30
+    with high variability.
+    """
     sky_condition.reset()
-    _feed([0.60] * 40)
+    values = [0.1 if i % 2 == 0 else 0.5 for i in range(40)]
+    _feed(values)
     assert sky_condition.classify() == "Mostly Cloudy"
 
 

@@ -64,11 +64,12 @@ def _derive_weather_code(
       is_foggy=True   → 45
 
     Sky codes (WMO okta-based cloudiness):
-      "Overcast"      → 3
-      "Mostly Cloudy" → 3
-      "Partly Cloudy" → 2
-      "Mostly Clear"  → 1
-      "Clear" / None  → 0
+      "Overcast"          → 3
+      "Heavily Overcast"  → 3
+      "Mostly Cloudy"     → 3
+      "Partly Cloudy"     → 2
+      "Mostly Clear"      → 1
+      "Clear" / None      → 0
 
     Returns an int WMO code.
     """
@@ -80,7 +81,7 @@ def _derive_weather_code(
         return 61
     if is_foggy:
         return 45
-    if effective_sky in ("Overcast", "Mostly Cloudy"):
+    if effective_sky in ("Overcast", "Heavily Overcast", "Mostly Cloudy"):
         return 3
     if effective_sky == "Partly Cloudy":
         return 2
