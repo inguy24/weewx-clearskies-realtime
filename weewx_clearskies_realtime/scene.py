@@ -89,6 +89,11 @@ _sunset_epoch: float | None = None
 # Used to detect when the date has rolled over and new times are needed.
 _sun_times_date: str | None = None
 
+# Last provider-derived sky label (e.g. "Overcast", "Mostly Cloudy").
+# Set by the REST scene enrichment from cloudcover; read by the SSE packet
+# tap so both paths produce the same scene at night.
+_provider_sky_label: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Public API — state updates
@@ -152,13 +157,25 @@ def detect_precip(
         _last_precip_overlay = overlay
 
 
+def update_provider_sky(label: str | None) -> None:
+    """Cache the provider-derived sky label for night-time fallback.
+
+    Called by the REST scene enrichment with a label derived from cloudcover.
+    The SSE packet tap reads this via build_scene()'s internal fallback so
+    both paths produce the same scene at night.
+    """
+    global _provider_sky_label  # noqa: PLW0603
+    _provider_sky_label = label
+
+
 def build_scene(sky_label: str | None) -> SceneDict:
     """Build the scene descriptor from current server state.
 
     Args:
         sky_label: Sky condition string from sky_condition.classify() or
                    provider sky text.  May be None at startup or when no
-                   conditions data is available.
+                   conditions data is available.  When None, falls back to
+                   the cached provider sky label (set via update_provider_sky).
 
     Returns:
         dict with keys:
@@ -166,7 +183,8 @@ def build_scene(sky_label: str | None) -> SceneDict:
           daytime: bool — True when current UTC time is between sunrise and sunset.
           overlay: "rain" | "snow" | None — None when no precip or linger expired.
     """
-    sky: SkyBucket = _map_sky(sky_label)
+    effective_label = sky_label if sky_label is not None else _provider_sky_label
+    sky: SkyBucket = _map_sky(effective_label)
     daytime: bool = _compute_daytime()
     overlay: OverlayValue = _get_lingering_overlay()
 
@@ -277,11 +295,13 @@ def reset() -> None:
     """Clear all module-level state.  For test isolation only."""
     global _last_precip_mono, _last_precip_overlay  # noqa: PLW0603
     global _sunrise_epoch, _sunset_epoch, _sun_times_date  # noqa: PLW0603
+    global _provider_sky_label  # noqa: PLW0603
     _last_precip_mono = None
     _last_precip_overlay = None
     _sunrise_epoch = None
     _sunset_epoch = None
     _sun_times_date = None
+    _provider_sky_label = None
 
 
 def get_sun_times_date() -> str | None:

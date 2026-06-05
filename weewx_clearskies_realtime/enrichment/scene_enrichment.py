@@ -41,6 +41,26 @@ from weewx_clearskies_realtime import sky_condition
 
 logger = logging.getLogger(__name__)
 
+
+def _cloud_pct_to_sky(pct: float | None) -> str | None:
+    """Map cloud cover percentage to a sky-condition label (WMO okta thresholds).
+
+    Same thresholds as weather_text._cloud_pct_to_sky — duplicated here to
+    avoid a circular import and keep the scene enrichment self-contained.
+    """
+    if pct is None or not isinstance(pct, (int, float)):
+        return None
+    if pct <= 10:
+        return "Clear"
+    if pct <= 25:
+        return "Mostly Clear"
+    if pct <= 50:
+        return "Partly Cloudy"
+    if pct <= 85:
+        return "Mostly Cloudy"
+    return "Overcast"
+
+
 # Upstream API paths (relative — prefixed with the proxy's upstream_url).
 _ALMANAC_PATH = "/api/v1/almanac"
 _FORECAST_PATH = "/api/v1/forecast"
@@ -73,15 +93,25 @@ async def enrich_scene(data: dict[str, Any]) -> dict[str, Any]:
         await _update_sun_times()
         precip_type = await _fetch_current_precip_type()
 
-        # Sky label: prefer local solar classifier, fall back to provider text.
+        # Sky label: prefer local solar classifier, fall back to provider
+        # cloud cover percentage at night.  Do NOT read weatherText — by this
+        # point the weather_text enrichment has already composed it into a full
+        # sentence (e.g. "Pleasant and Humid, with Overcast") that won't match
+        # the scene module's sky-label→bucket lookup table.
         sky_label: str | None = sky_condition.classify()
         if sky_label is None:
-            # Night or startup — use the provider-reported text as sky label.
-            weather_text = obs.get("weatherText")
-            sky_label = str(weather_text) if weather_text else None
+            cloud_pct = _extract_float(obs.get("cloudcover"))
+            sky_label = _cloud_pct_to_sky(cloud_pct)
 
-        # Provider conditions text for storm detection.
+        # Storm override: "thunderstorm" in conditions text triggers the
+        # storm sky bucket regardless of cloud cover (ADR-047 §3).
         conditions_text = str(obs.get("weatherText") or "")
+        if "thunderstorm" in conditions_text.lower():
+            sky_label = "Thunderstorm"
+
+        # Cache the provider-derived sky label so the SSE packet tap (which
+        # has no access to cloudcover) can produce the same scene at night.
+        scene_mod.update_provider_sky(sky_label)
 
         # Local rain rate (sign only — used as a presence check, not threshold).
         rain_rate = _extract_float(obs.get("rainRate"))

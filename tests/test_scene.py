@@ -624,10 +624,11 @@ def test_detect_precip_with_all_none_does_not_set_state() -> None:
 
 
 def test_reset_clears_all_state() -> None:
-    """reset() clears precip linger, sun times, and overlay state."""
+    """reset() clears precip linger, sun times, overlay, and provider sky state."""
     scene_mod.detect_precip(precip_type="rain", conditions_text=None, rain_rate=None)
     scene_mod.update_sun_times(_epoch_to_utc_iso(time.time() - 3600),
                                _epoch_to_utc_iso(time.time() + 3600))
+    scene_mod.update_provider_sky("Overcast")
 
     scene_mod.reset()
 
@@ -636,6 +637,25 @@ def test_reset_clears_all_state() -> None:
     assert scene_mod._sunrise_epoch is None
     assert scene_mod._sunset_epoch is None
     assert scene_mod.get_sun_times_date() is None
+    assert scene_mod._provider_sky_label is None
+
+
+def test_provider_sky_fallback_at_night() -> None:
+    """build_scene(None) uses cached provider sky when sky_label is None."""
+    scene_mod.update_provider_sky("Overcast")
+    result = scene_mod.build_scene(sky_label=None)
+    assert result["sky"] == "cloudy", (
+        "Provider sky 'Overcast' must map to 'cloudy' bucket via fallback"
+    )
+
+
+def test_provider_sky_fallback_not_used_when_sky_label_present() -> None:
+    """build_scene() ignores provider sky when a direct sky_label is provided."""
+    scene_mod.update_provider_sky("Overcast")
+    result = scene_mod.build_scene(sky_label="Clear")
+    assert result["sky"] == "clear", (
+        "Direct sky_label must take precedence over cached provider sky"
+    )
 
 
 def test_get_sun_times_date_returns_today_after_update() -> None:

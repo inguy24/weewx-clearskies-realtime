@@ -200,27 +200,26 @@ def test_all_parts_with_comfort_first(mock_classify, mock_daytime) -> None:
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
-def test_calm_omitted(mock_classify, mock_daytime) -> None:
-    """Beaufort 0 (Calm) is omitted from the text (ADR-044 §4)."""
+def test_calm_included(mock_classify, mock_daytime) -> None:
+    """Beaufort 0 (Calm) is included in the text (ADR-044 §4, amended 2026-06-05)."""
     result = build_weather_text(
         sky="Clear",
         wind_speed=0.0,
         wind_speed_unit="mile_per_hour",
     )
-    # Only sky; wind omitted.
-    assert result == "Clear"
+    assert result == "Clear, and Calm"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
 def test_calm_zero_mps(mock_classify, mock_daytime) -> None:
-    """Wind speed 0.0 m/s (Calm) — not included in output."""
+    """Wind speed 0.0 m/s (Calm) — included with 'and' connector."""
     result = build_weather_text(
         sky="Overcast",
         wind_speed=0.0,
         wind_speed_unit="meter_per_second",
     )
-    assert result == "Overcast"
+    assert result == "Overcast, and Calm"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
@@ -377,9 +376,7 @@ def test_night_falls_back_to_provider_sky() -> None:
 # Thresholds: windGust ≥ windSpeed + 12 mph  AND  windGust ≥ 18 mph.
 # Both speed values are converted to mph before the check regardless of the
 # declared source unit, so non-mph stations stay correct.
-# The qualifier only fires when Beaufort > 0 — Calm wind is already suppressed
-# from the text, so "and Gusty" has no label to attach to when windSpeed is Calm
-# (this is a conscious design choice, not an oversight: see conditions_text.py §3).
+# The qualifier only fires when Beaufort > 0 — "Calm and Gusty" is nonsensical.
 # ---------------------------------------------------------------------------
 
 
@@ -477,13 +474,11 @@ def test_gusty_non_mph_station_knots(mock_classify, mock_daytime) -> None:
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
-def test_gusty_calm_wind_suppressed_even_with_high_gust(mock_classify, mock_daytime) -> None:
-    """windSpeed=0 mph (Calm, Beaufort 0) + windGust=25 mph produces no wind text.
+def test_gusty_not_applied_to_calm(mock_classify, mock_daytime) -> None:
+    """windSpeed=0 mph (Calm, Beaufort 0) + windGust=25 mph: Calm without Gusty.
 
-    ADR-044 §4: Calm is suppressed from the text. The "and Gusty" qualifier
-    attaches to the Beaufort label, so it only fires inside the `if b["value"] > 0`
-    block. When sustained wind is Calm, the entire wind component is omitted —
-    "and Gusty" does not appear floating alone (conscious design choice).
+    "Calm and Gusty" is nonsensical — gusty qualifier only fires for Beaufort > 0.
+    Calm still appears in the text (amended 2026-06-05).
     """
     result = build_weather_text(
         sky="Clear",
@@ -492,11 +487,10 @@ def test_gusty_calm_wind_suppressed_even_with_high_gust(mock_classify, mock_dayt
         wind_gust=25.0,
         wind_gust_unit="mile_per_hour",
     )
-    assert "and Gusty" not in result, (
-        f"Calm + high gust must NOT produce 'and Gusty': got {result!r}"
+    assert "Gusty" not in result, (
+        f"Calm + high gust must NOT produce 'Gusty': got {result!r}"
     )
-    # Calm wind is omitted; only sky remains.
-    assert result == "Clear", f"Expected 'Clear' only, got {result!r}"
+    assert result == "Clear, and Calm", f"Expected 'Clear, and Calm', got {result!r}"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
