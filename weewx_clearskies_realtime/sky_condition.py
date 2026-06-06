@@ -41,13 +41,13 @@ _NOISE_FLOOR: float = 0.0
 #
 # Low sigma branch (uniform sky):
 _KC_CLEAR_THRESHOLD: float = 0.85           # → Clear
-_KC_UNIFORM_MOSTLY_CLEAR: float = 0.70      # → Mostly Clear
+_KC_UNIFORM_MOSTLY_CLEAR: float = 0.78      # → Mostly Clear (thin cirrus/haze only)
 _KC_UNIFORM_PARTLY_CLOUDY: float = 0.50     # → Partly Cloudy
 _KC_UNIFORM_MOSTLY_CLOUDY: float = 0.30     # → Mostly Cloudy
 # (below 0.30 → Overcast)
 #
 # High sigma branch (broken/variable sky):
-_KC_MOSTLY_CLEAR_THRESHOLD: float = 0.70    # → Mostly Clear
+_KC_MOSTLY_CLEAR_THRESHOLD: float = 0.78    # → Mostly Clear
 _KC_MOSTLY_CLOUDY_THRESHOLD: float = 0.40   # → Mostly Cloudy
 # (below 0.40 → Mostly Cloudy)
 _SIGMA_HIGH_THRESHOLD: float = 0.10
