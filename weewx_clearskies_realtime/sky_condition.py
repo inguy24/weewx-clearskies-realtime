@@ -36,12 +36,20 @@ _MIN_SOLAR_RAD: float = 50.0
 _NOISE_FLOOR: float = 0.0
 
 # kc classification thresholds (ADR-044 amended sigma-first table).
+# Both branches use the same 6-tier scale; sigma determines which set of
+# kc breakpoints applies.
+#
 # Low sigma branch (uniform sky):
-_KC_CLEAR_THRESHOLD: float = 0.85        # sigma < 0.10 and mean >= 0.85 → Clear
-_KC_HEAVY_OVERCAST_THRESHOLD: float = 0.30  # sigma < 0.10 and mean < 0.30 → Heavily Overcast
+_KC_CLEAR_THRESHOLD: float = 0.85           # → Clear
+_KC_UNIFORM_MOSTLY_CLEAR: float = 0.70      # → Mostly Clear
+_KC_UNIFORM_PARTLY_CLOUDY: float = 0.50     # → Partly Cloudy
+_KC_UNIFORM_MOSTLY_CLOUDY: float = 0.30     # → Mostly Cloudy
+# (below 0.30 → Overcast)
+#
 # High sigma branch (broken/variable sky):
-_KC_MOSTLY_CLEAR_THRESHOLD: float = 0.70  # sigma >= 0.10 and mean >= 0.70 → Mostly Clear
-_KC_MOSTLY_CLOUDY_THRESHOLD: float = 0.40  # sigma >= 0.10 and mean < 0.40 → Mostly Cloudy
+_KC_MOSTLY_CLEAR_THRESHOLD: float = 0.70    # → Mostly Clear
+_KC_MOSTLY_CLOUDY_THRESHOLD: float = 0.40   # → Mostly Cloudy
+# (below 0.40 → Mostly Cloudy)
 _SIGMA_HIGH_THRESHOLD: float = 0.10
 
 # Maximum kc (cloud-edge enhancement above clear-sky; Tapakis & Charalambides 2014).
@@ -139,12 +147,16 @@ def classify() -> str | None:
     # Sigma-first classification (ADR-044 amended table).
     # Low sigma = uniform sky. High sigma = broken clouds.
     if sigma_kc < _SIGMA_HIGH_THRESHOLD:
-        # Uniform sky — curve shape is flat.
+        # Uniform sky — flat kc curve, consistent cloud cover.
         if mean_kc >= _KC_CLEAR_THRESHOLD:
             return "Clear"
-        if mean_kc >= _KC_HEAVY_OVERCAST_THRESHOLD:
-            return "Overcast"
-        return "Heavily Overcast"
+        if mean_kc >= _KC_UNIFORM_MOSTLY_CLEAR:
+            return "Mostly Clear"
+        if mean_kc >= _KC_UNIFORM_PARTLY_CLOUDY:
+            return "Partly Cloudy"
+        if mean_kc >= _KC_UNIFORM_MOSTLY_CLOUDY:
+            return "Mostly Cloudy"
+        return "Overcast"
     else:
         # Variable sky — broken clouds, mean determines proportion.
         if mean_kc >= _KC_MOSTLY_CLEAR_THRESHOLD:
