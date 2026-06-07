@@ -490,6 +490,31 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
         except Exception:  # noqa: BLE001
             logger.debug("Observation envelope conversion failed; passing through raw")
 
+    # --- Shape 2b: archive envelope {data: list, units: label_dict, …} ---
+    # Same envelope as Shape 2 but "data" is a list of records (not a single
+    # dict).  Infer usUnits from the "units" label block, then transform each
+    # record with that unit system.  This injects derived fields (beaufort,
+    # comfortIndex) that Shape 3 alone would miss because individual records
+    # lack a usUnits key.
+    if (
+        isinstance(obs_payload, list)
+        and isinstance(units_block, dict)
+        and _transformer is not None
+    ):
+        us_units = _infer_us_units(units_block)
+        converted_list = []
+        for record in obs_payload:
+            if not isinstance(record, dict):
+                converted_list.append(record)
+                continue
+            try:
+                converted_list.append(
+                    _transformer.transform_record(record, us_units)
+                )
+            except Exception:  # noqa: BLE001
+                converted_list.append(record)
+        return {**data, "data": converted_list}
+
     # --- Shape 3: nested-list envelope {records|data|results: [...], …} ---
     # Convert each record in the list but don't modify the outer envelope.
     for key in ("records", "data", "results"):
