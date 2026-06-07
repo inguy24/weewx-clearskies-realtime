@@ -509,16 +509,20 @@ def _apply_conversion(data: dict[str, object] | list[object]) -> dict[str, objec
                 continue
             try:
                 converted = _transformer.transform_record(record, us_units)
-                # Flatten ConvertedValue dicts to scalars (same as Shape 2)
-                # so the dashboard receives plain numbers for chart rendering.
+                # Extract raw converted values from ConvertedValue dicts.
+                # Unlike Shape 2 (which uses _flatten_converted_value to parse
+                # the formatted string — lossy rounding for display), archive
+                # records need full-precision values for chart rendering.
                 # Exception: keep 'beaufort' as a ConvertedValue dict — the
                 # wind rose binning reads it via extractNumber({value, label, formatted}).
                 flattened: dict[str, object] = {}
                 for key, val in converted.items():
                     if key == "beaufort":
                         flattened[key] = val
+                    elif isinstance(val, dict) and "value" in val:
+                        flattened[key] = val["value"]
                     else:
-                        flattened[key] = _flatten_converted_value(val)
+                        flattened[key] = val
                 converted_list.append(flattened)
             except Exception:  # noqa: BLE001
                 converted_list.append(record)
