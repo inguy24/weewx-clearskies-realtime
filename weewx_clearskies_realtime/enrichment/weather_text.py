@@ -115,7 +115,11 @@ def compose_weather_text(obs_data: dict | None = None) -> str:  # type: ignore[t
     # Derive provider_sky from cloud cover percentage (provider-agnostic field).
     _cloud_pct = obs_data.get("cloudcover") if obs_data else None
     _is_day = _sky_module.is_daytime()
-    _provider_sky = _cloud_pct_to_sky(_cloud_pct, is_day=_is_day) if isinstance(_cloud_pct, (int, float)) else None
+    _provider_sky = (
+        _cloud_pct_to_sky(_cloud_pct, is_day=_is_day)
+        if isinstance(_cloud_pct, (int, float))
+        else None
+    )
 
     # Fog override: when outTemp − dewpoint ≤ 1 °F the air is near-saturated;
     # replace any cloud-cover-derived sky label with "Foggy".
