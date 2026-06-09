@@ -10,6 +10,20 @@ Thresholds derived from:
   - ASOS 30-minute window with last-10-minute double-weighting
   - Sigma threshold ~0.05 from solar variability research
 
+Low-sigma (uniform sky) thresholds:
+  Clear          kc >= 0.85  (Davis 6450 ±5% + maxSolarRad ±4% model error
+                              means a clear sky can read ~0.93 from systematic
+                              bias alone; 0.95 was inside the noise floor)
+  Mostly Clear   kc >= 0.70
+  Partly Cloudy  kc >= 0.50
+  Mostly Cloudy  kc >= 0.30
+  Cloudy         kc <  0.30
+
+High-sigma (variable/broken sky) thresholds:
+  Mostly Clear   kc >= 0.85
+  Partly Cloudy  kc >= 0.60
+  Mostly Cloudy  kc <  0.60
+
 Module-level state (the deque buffer) is intentional. The BFF is a
 single-process service; the buffer must persist across requests and
 packet calls. Use reset() in tests to isolate test cases.
@@ -43,28 +57,21 @@ _MIN_SOLAR_RAD: float = 50.0
 _NOISE_FLOOR: float = 0.0
 
 # ---------------------------------------------------------------------------
-# Classification thresholds (research-backed)
+# Classification thresholds
 #
-# Derived from Kasten & Czeplak (1980) kc = 1 - 0.75*(N/8)^3.4 mapped to
-# NWS sky condition categories:
-#   Clear (0-1 okta, 0-12%)  → kc ≥ 0.98  (relaxed to 0.95 for sensor noise)
-#   Mostly Clear (1-3 okta)  → kc ≥ 0.90  (Kasten 3 okta → kc 0.93)
-#   Partly Cloudy (3-5 okta) → kc ≥ 0.75  (Kasten 5 okta → kc 0.75)
-#   Mostly Cloudy (5-7 okta) → kc ≥ 0.45  (Kasten 7 okta → kc 0.39)
-#   Overcast (7-8 okta)      → kc < 0.45
+# Low-sigma (uniform sky) — see module docstring for threshold rationale.
 # ---------------------------------------------------------------------------
 
 # Low sigma branch (uniform sky):
-_KC_CLEAR: float = 0.95
-_KC_MOSTLY_CLEAR: float = 0.90
-_KC_PARTLY_CLOUDY: float = 0.75
-_KC_MOSTLY_CLOUDY: float = 0.45
+_KC_CLEAR: float = 0.85
+_KC_MOSTLY_CLEAR: float = 0.70
+_KC_PARTLY_CLOUDY: float = 0.50
+_KC_MOSTLY_CLOUDY: float = 0.30
 
 # High sigma branch (variable/broken sky) — shifted down because high
 # variability itself signals broken clouds even at higher mean kc.
 _KC_VAR_MOSTLY_CLEAR: float = 0.85
-_KC_VAR_PARTLY_CLOUDY: float = 0.65
-_KC_VAR_MOSTLY_CLOUDY: float = 0.45
+_KC_VAR_PARTLY_CLOUDY: float = 0.60
 
 # Sigma threshold separating uniform from variable sky.
 # Research uses ~0.05; we use 0.08 as a practical middle ground for
@@ -139,7 +146,7 @@ def classify() -> str | None:
 
     Returns:
         One of: "Clear", "Mostly Clear", "Partly Cloudy", "Mostly Cloudy",
-        "Overcast", or None when insufficient data.
+        "Cloudy", or None when insufficient data.
     """
     if len(_buffer) < _MIN_SAMPLES:
         return None
@@ -189,16 +196,14 @@ def _classify_raw(mean_kc: float, sigma_kc: float) -> str:
             return "Partly Cloudy"
         if mean_kc >= _KC_MOSTLY_CLOUDY:
             return "Mostly Cloudy"
-        return "Overcast"
+        return "Cloudy"
     else:
         # Variable/broken sky
         if mean_kc >= _KC_VAR_MOSTLY_CLEAR:
             return "Mostly Clear"
         if mean_kc >= _KC_VAR_PARTLY_CLOUDY:
             return "Partly Cloudy"
-        if mean_kc >= _KC_VAR_MOSTLY_CLOUDY:
-            return "Mostly Cloudy"
-        return "Overcast"
+        return "Mostly Cloudy"
 
 
 def _classify_with_hysteresis(
@@ -220,9 +225,9 @@ def _classify_with_hysteresis(
         elif current == "Mostly Cloudy":
             if _KC_MOSTLY_CLOUDY - h <= mean_kc < _KC_PARTLY_CLOUDY + h:
                 return "Mostly Cloudy"
-        elif current == "Overcast":
+        elif current == "Cloudy":
             if mean_kc < _KC_MOSTLY_CLOUDY + h:
-                return "Overcast"
+                return "Cloudy"
     else:
         if current == "Mostly Clear":
             if mean_kc >= _KC_VAR_MOSTLY_CLEAR - h:
@@ -231,11 +236,8 @@ def _classify_with_hysteresis(
             if _KC_VAR_PARTLY_CLOUDY - h <= mean_kc < _KC_VAR_MOSTLY_CLEAR + h:
                 return "Partly Cloudy"
         elif current == "Mostly Cloudy":
-            if _KC_VAR_MOSTLY_CLOUDY - h <= mean_kc < _KC_VAR_PARTLY_CLOUDY + h:
+            if mean_kc < _KC_VAR_PARTLY_CLOUDY + h:
                 return "Mostly Cloudy"
-        elif current == "Overcast":
-            if mean_kc < _KC_VAR_MOSTLY_CLOUDY + h:
-                return "Overcast"
     # Hysteresis didn't hold — return the raw classification
     return _classify_raw(mean_kc, sigma_kc)
 
