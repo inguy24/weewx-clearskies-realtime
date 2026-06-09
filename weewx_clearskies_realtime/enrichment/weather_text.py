@@ -20,29 +20,29 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _cloud_pct_to_sky(pct: float | None) -> str | None:
+def _cloud_pct_to_sky(pct: float | None, *, is_day: bool = False) -> str | None:
     """Map cloud cover percentage to a sky-condition string.
 
     Thresholds (WMO / NWS okta-based approximation):
-      ≤ 10 % → "Clear"
-      ≤ 25 % → "Mostly Clear"
+      ≤ 10 % → "Clear" / "Sunny" (day)
+      ≤ 25 % → "Mostly Clear" / "Mostly Sunny" (day)
       ≤ 50 % → "Partly Cloudy"
       ≤ 85 % → "Mostly Cloudy"
-      > 85 % → "Overcast"
+      > 85 % → "Cloudy"
 
     Returns None when pct is None or not a numeric type.
     """
     if pct is None or not isinstance(pct, (int, float)):
         return None
     if pct <= 10:
-        return "Clear"
+        return "Sunny" if is_day else "Clear"
     if pct <= 25:
-        return "Mostly Clear"
+        return "Mostly Sunny" if is_day else "Mostly Clear"
     if pct <= 50:
         return "Partly Cloudy"
     if pct <= 85:
         return "Mostly Cloudy"
-    return "Overcast"
+    return "Cloudy"
 
 
 def _derive_weather_code(
@@ -64,12 +64,10 @@ def _derive_weather_code(
       is_foggy=True   → 45
 
     Sky codes (WMO okta-based cloudiness):
-      "Overcast"          → 3
-      "Heavily Overcast"  → 3
-      "Mostly Cloudy"     → 3
-      "Partly Cloudy"     → 2
-      "Mostly Clear"      → 1
-      "Clear" / None      → 0
+      "Cloudy" / "Mostly Cloudy"      → 3
+      "Partly Cloudy"                 → 2
+      "Mostly Clear" / "Mostly Sunny" → 1
+      "Clear" / "Sunny" / None        → 0
 
     Returns an int WMO code.
     """
@@ -81,11 +79,11 @@ def _derive_weather_code(
         return 61
     if is_foggy:
         return 45
-    if effective_sky in ("Overcast", "Heavily Overcast", "Mostly Cloudy"):
+    if effective_sky in ("Cloudy", "Mostly Cloudy"):
         return 3
     if effective_sky == "Partly Cloudy":
         return 2
-    if effective_sky == "Mostly Clear":
+    if effective_sky in ("Mostly Clear", "Mostly Sunny"):
         return 1
     return 0
 
@@ -116,7 +114,8 @@ def compose_weather_text(obs_data: dict | None = None) -> str:  # type: ignore[t
     """
     # Derive provider_sky from cloud cover percentage (provider-agnostic field).
     _cloud_pct = obs_data.get("cloudcover") if obs_data else None
-    _provider_sky = _cloud_pct_to_sky(_cloud_pct) if isinstance(_cloud_pct, (int, float)) else None
+    _is_day = _sky_module.is_daytime()
+    _provider_sky = _cloud_pct_to_sky(_cloud_pct, is_day=_is_day) if isinstance(_cloud_pct, (int, float)) else None
 
     # Fog override: when outTemp − dewpoint ≤ 1 °F the air is near-saturated;
     # replace any cloud-cover-derived sky label with "Foggy".
@@ -180,8 +179,9 @@ def enrich_weather_text(data: dict) -> dict:  # type: ignore[type-arg]
 
         # Derive weatherCode from the same inputs used for weatherText.
         _cloud_pct = obs_data.get("cloudcover") if obs_data else None
+        _is_day_code = _sky_module.is_daytime()
         _provider_sky: str | None = (
-            _cloud_pct_to_sky(_cloud_pct)
+            _cloud_pct_to_sky(_cloud_pct, is_day=_is_day_code)
             if isinstance(_cloud_pct, (int, float))
             else None
         )

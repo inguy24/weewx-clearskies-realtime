@@ -88,6 +88,21 @@ def _to_fahrenheit(value: float | None, source_unit: str) -> float | None:
     return convert(value, source_unit, "degree_F")
 
 
+_DAY_LABELS: dict[str, str] = {
+    "Clear": "Sunny",
+    "Mostly Clear": "Mostly Sunny",
+}
+
+
+def _to_display_label(sky_label: str | None, is_daytime: bool) -> str | None:
+    """Map sky classification to NWS day/night display vocabulary."""
+    if sky_label is None:
+        return None
+    if is_daytime:
+        return _DAY_LABELS.get(sky_label, sky_label)
+    return sky_label
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -174,10 +189,12 @@ def build_weather_text(
 
     # 2. Sky condition: use local solar classification only during daytime.
     # At night, fall back to provider sky data (ADR-044 §1b).
-    if sky is not None and _sky_condition_module.is_daytime():
+    is_day = _sky_condition_module.is_daytime()
+    if sky is not None and is_day:
         effective_sky = sky
     else:
         effective_sky = provider_sky
+    effective_sky = _to_display_label(effective_sky, is_day)
     parts.append(effective_sky)
 
     # 3. Wind (Beaufort label). All Beaufort values including 0 (Calm) are
