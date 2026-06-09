@@ -178,7 +178,7 @@ def test_all_parts_with_comfort_first(mock_classify, mock_daytime) -> None:
     """All four components present in order: comfort, sky, wind, precipitation.
 
     Comfort: 'Warm and Humid' (mocked)
-    Sky: Overcast
+    Sky: Cloudy
     Wind: 23 mph = 10.28 m/s → Beaufort 5 'Fresh breeze'
     Precip: 0.05 in/hr → Light Rain
 
@@ -189,25 +189,28 @@ def test_all_parts_with_comfort_first(mock_classify, mock_daytime) -> None:
         dewpoint=67.0,
         temp_unit="degree_F",
         dewpoint_unit="degree_F",
-        sky="Overcast",
+        sky="Cloudy",
         rain_rate=0.05,
         rain_rate_unit="inch_per_hour",
         wind_speed=23.0,
         wind_speed_unit="mile_per_hour",
     )
-    assert result == "Warm and Humid, Overcast, Fresh breeze, with Light Rain"
+    assert result == "Warm and Humid, Cloudy, Fresh breeze, with Light Rain"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
 def test_calm_included(mock_classify, mock_daytime) -> None:
-    """Beaufort 0 (Calm) is included in the text (ADR-044 §4, amended 2026-06-05)."""
+    """Beaufort 0 (Calm) is included in the text (ADR-044 §4, amended 2026-06-05).
+
+    Daytime mock → "Clear" maps to "Sunny" per NWS day vocabulary.
+    """
     result = build_weather_text(
         sky="Clear",
         wind_speed=0.0,
         wind_speed_unit="mile_per_hour",
     )
-    assert result == "Clear, and Calm"
+    assert result == "Sunny, and Calm"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
@@ -215,11 +218,11 @@ def test_calm_included(mock_classify, mock_daytime) -> None:
 def test_calm_zero_mps(mock_classify, mock_daytime) -> None:
     """Wind speed 0.0 m/s (Calm) — included with 'and' connector."""
     result = build_weather_text(
-        sky="Overcast",
+        sky="Cloudy",
         wind_speed=0.0,
         wind_speed_unit="meter_per_second",
     )
-    assert result == "Overcast, and Calm"
+    assert result == "Cloudy, and Calm"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
@@ -251,12 +254,15 @@ def test_provider_fallback() -> None:
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
 def test_provider_fallback_overridden_by_sky(mock_classify, mock_daytime) -> None:
-    """Local sky takes priority over provider_sky when both present and daytime."""
+    """Local sky takes priority over provider_sky when both present and daytime.
+
+    Daytime mock → "Mostly Clear" maps to "Mostly Sunny".
+    """
     result = build_weather_text(
         sky="Mostly Clear",
         provider_sky="Foggy",
     )
-    assert result == "Mostly Clear"
+    assert result == "Mostly Sunny"
 
 
 def test_no_sky_no_provider() -> None:
@@ -282,12 +288,12 @@ def test_all_absent() -> None:
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
 @patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
 def test_no_wind_speed(mock_classify, mock_daytime) -> None:
-    """wind_speed=None → wind component omitted."""
+    """wind_speed=None → wind component omitted. Daytime → "Sunny"."""
     result = build_weather_text(
         sky="Clear",
         wind_speed=None,
     )
-    assert result == "Clear"
+    assert result == "Sunny"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
@@ -299,13 +305,13 @@ def test_heavy_rain_and_wind(mock_classify, mock_daytime) -> None:
     Order: [sky, wind, precip] with 'with' before last.
     """
     result = build_weather_text(
-        sky="Overcast",
+        sky="Cloudy",
         rain_rate=0.5,
         rain_rate_unit="inch_per_hour",
         wind_speed=35.0,
         wind_speed_unit="mile_per_hour",
     )
-    assert result == "Overcast, Near gale, with Heavy Rain"
+    assert result == "Cloudy, Near gale, with Heavy Rain"
 
 
 def test_precip_in_mm_per_hour() -> None:
@@ -368,6 +374,41 @@ def test_night_falls_back_to_provider_sky() -> None:
         provider_sky="Mostly Cloudy",
     )
     assert result == "Mostly Cloudy"
+
+
+# ---------------------------------------------------------------------------
+# Day/night display vocabulary tests (NWS standard)
+# ---------------------------------------------------------------------------
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_daytime_clear_shows_sunny(mock_classify, mock_daytime) -> None:
+    """Daytime + sky='Clear' → display as 'Sunny' per NWS day vocabulary."""
+    result = build_weather_text(sky="Clear")
+    assert result == "Sunny"
+
+
+def test_night_clear_shows_clear() -> None:
+    """Night + provider_sky='Clear' → stays 'Clear' (night vocabulary)."""
+    result = build_weather_text(provider_sky="Clear")
+    assert result == "Clear"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_daytime_mostly_clear_shows_mostly_sunny(mock_classify, mock_daytime) -> None:
+    """Daytime + sky='Mostly Clear' → 'Mostly Sunny'."""
+    result = build_weather_text(sky="Mostly Clear")
+    assert result == "Mostly Sunny"
+
+
+@patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)
+@patch("weewx_clearskies_realtime.conditions_text._temperature_comfort.classify", return_value=None)
+def test_partly_cloudy_unchanged_day_and_night(mock_classify, mock_daytime) -> None:
+    """'Partly Cloudy' stays 'Partly Cloudy' regardless of day/night."""
+    day_result = build_weather_text(sky="Partly Cloudy")
+    assert day_result == "Partly Cloudy"
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +531,7 @@ def test_gusty_not_applied_to_calm(mock_classify, mock_daytime) -> None:
     assert "Gusty" not in result, (
         f"Calm + high gust must NOT produce 'Gusty': got {result!r}"
     )
-    assert result == "Clear, and Calm", f"Expected 'Clear, and Calm', got {result!r}"
+    assert result == "Sunny, and Calm", f"Expected 'Sunny, and Calm', got {result!r}"
 
 
 @patch("weewx_clearskies_realtime.conditions_text._sky_condition_module.is_daytime", return_value=True)

@@ -40,39 +40,54 @@ def _feed(kc_values: list[float], max_solar: float = 500.0) -> None:
 
 
 def test_clear_sky() -> None:
-    """Steady high kc (0.92) with low variance → 'Clear'."""
+    """Steady high kc (0.92) with low variance → 'Clear' (threshold ≥0.85)."""
     sky_condition.reset()
     _feed([0.92] * 40)
     assert sky_condition.classify() == "Clear"
 
 
-def test_overcast() -> None:
-    """kc = 0.50 with low sigma (uniform sky, 0.30–0.85 band) → 'Overcast'.
+def test_clear_sky_at_boundary() -> None:
+    """kc=0.85 exactly at Clear threshold with low sigma → 'Clear'."""
+    sky_condition.reset()
+    _feed([0.85] * 40)
+    assert sky_condition.classify() == "Clear"
 
-    Under the sigma-first table (ADR-044 amended): sigma < 0.10 and
-    0.30 ≤ mean < 0.85 → 'Overcast'. kc=0.20 would now be 'Heavily Overcast'.
-    """
+
+def test_mostly_clear_low_sigma() -> None:
+    """kc=0.78 with low sigma (uniform, 0.70–0.85 band) → 'Mostly Clear'."""
+    sky_condition.reset()
+    _feed([0.78] * 40)
+    assert sky_condition.classify() == "Mostly Clear"
+
+
+def test_partly_cloudy_low_sigma() -> None:
+    """kc=0.50 with low sigma (uniform, 0.50–0.70 band) → 'Partly Cloudy'."""
     sky_condition.reset()
     _feed([0.50] * 40)
-    assert sky_condition.classify() == "Overcast"
+    assert sky_condition.classify() == "Partly Cloudy"
+
+
+def test_cloudy_low_sigma() -> None:
+    """kc=0.25 with low sigma (uniform, <0.30) → 'Cloudy'."""
+    sky_condition.reset()
+    _feed([0.25] * 40)
+    assert sky_condition.classify() == "Cloudy"
 
 
 def test_partly_cloudy() -> None:
-    """Alternating kc 0.3/0.9 — mean ≈ 0.6, high sigma → 'Partly Cloudy'."""
+    """Alternating kc — mean ≈ 0.65, high sigma → 'Partly Cloudy' (≥0.60)."""
     sky_condition.reset()
-    # Alternating creates mean ≈ 0.6 (in 0.40–0.85 band) with high sigma.
-    values = [0.3 if i % 2 == 0 else 0.9 for i in range(36)]
+    values = [0.4 if i % 2 == 0 else 0.9 for i in range(36)]
     _feed(values)
     result = sky_condition.classify()
     assert result == "Partly Cloudy"
 
 
 def test_mostly_cloudy() -> None:
-    """High sigma, mean kc < 0.40 (variable sky with low mean) → 'Mostly Cloudy'.
+    """High sigma, mean kc < 0.60 → 'Mostly Cloudy'.
 
-    Under the sigma-first table (ADR-044 amended): sigma >= 0.10 and
-    mean < 0.40 → 'Mostly Cloudy'. Alternating 0.1/0.5 gives mean ≈ 0.30
-    with high variability.
+    Alternating 0.1/0.5 gives mean ≈ 0.30 with high variability,
+    well below the 0.60 high-sigma Partly Cloudy threshold.
     """
     sky_condition.reset()
     values = [0.1 if i % 2 == 0 else 0.5 for i in range(40)]

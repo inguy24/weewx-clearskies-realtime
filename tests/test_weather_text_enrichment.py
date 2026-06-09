@@ -32,6 +32,8 @@ from weewx_clearskies_realtime.units.derived import beaufort
 from weewx_clearskies_realtime.conditions_text import build_weather_text
 from weewx_clearskies_realtime.enrichment import input_smoother
 from weewx_clearskies_realtime.enrichment.weather_text import (
+    _cloud_pct_to_sky,
+    _derive_weather_code,
     compose_weather_text,
     enrich_weather_text,
 )
@@ -271,3 +273,48 @@ def test_enrich_weather_text_weathertext_value_is_none_or_string() -> None:
     assert value is None or isinstance(value, str), (
         f"weatherText must be None or str, got {type(value)!r}: {value!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _cloud_pct_to_sky day/night vocabulary tests
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_pct_to_sky_day_returns_sunny() -> None:
+    """≤10% cloud cover + daytime → 'Sunny'."""
+    assert _cloud_pct_to_sky(5, is_day=True) == "Sunny"
+
+
+def test_cloud_pct_to_sky_day_returns_mostly_sunny() -> None:
+    """≤25% cloud cover + daytime → 'Mostly Sunny'."""
+    assert _cloud_pct_to_sky(20, is_day=True) == "Mostly Sunny"
+
+
+def test_cloud_pct_to_sky_night_returns_clear() -> None:
+    """≤10% cloud cover + night → 'Clear'."""
+    assert _cloud_pct_to_sky(5, is_day=False) == "Clear"
+
+
+def test_cloud_pct_to_sky_cloudy_replaces_overcast() -> None:
+    """>85% cloud cover → 'Cloudy' (not 'Overcast')."""
+    assert _cloud_pct_to_sky(90) == "Cloudy"
+
+
+# ---------------------------------------------------------------------------
+# _derive_weather_code alias tests (Sunny/Mostly Sunny/Cloudy)
+# ---------------------------------------------------------------------------
+
+
+def test_weather_code_sunny_maps_to_zero() -> None:
+    """'Sunny' → WMO code 0 (same as 'Clear')."""
+    assert _derive_weather_code(effective_sky="Sunny", rain_label=None, is_foggy=False) == 0
+
+
+def test_weather_code_mostly_sunny_maps_to_one() -> None:
+    """'Mostly Sunny' → WMO code 1 (same as 'Mostly Clear')."""
+    assert _derive_weather_code(effective_sky="Mostly Sunny", rain_label=None, is_foggy=False) == 1
+
+
+def test_weather_code_cloudy_maps_to_three() -> None:
+    """'Cloudy' → WMO code 3 (same as former 'Overcast')."""
+    assert _derive_weather_code(effective_sky="Cloudy", rain_label=None, is_foggy=False) == 3
