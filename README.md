@@ -1,3 +1,11 @@
+> **⚠️ DEPRECATED**
+>
+> This service has been merged into [weewx-clearskies-api](https://github.com/inguy24/weewx-clearskies-api) as of 2026-06-14.
+> See [ADR-058](https://github.com/inguy24/weather-belchertown/blob/master/docs/decisions/ADR-058-fold-realtime-into-api.md) for the decision rationale.
+>
+> The SSE endpoint, enrichment pipeline, unit conversion, and all real-time data processing
+> now run within the API service. This repository is archived for reference only.
+
 # weewx-clearskies-realtime
 
 Small Python service that bridges [weewx](https://github.com/weewx/weewx) loop packets to browser clients as [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) (SSE). The dashboard connects to the `/sse` endpoint and receives a live stream of current conditions without polling.
